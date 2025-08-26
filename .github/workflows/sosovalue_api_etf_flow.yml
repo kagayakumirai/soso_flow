@@ -1,0 +1,44 @@
+name: SoSoValue ETF Flow (API)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0,3,6,9 * * *"   # UTC 0,3,6,9 = JST 9,12,15,18
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Restore send state
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: sosovalue_state.json
+          key: sosovalue-state-${{ github.run_id }}
+          restore-keys: |
+            sosovalue-state-
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Run SoSoValue API Sentry
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          SOSO_API_KEY: ${{ secrets.SOSO_API_KEY }}
+          SEND_ETH: "0"   # ETHも通知するなら "1"
+        run: |
+          python -u sosovalue_api_etf_flow.py
+
+      - name: Save send state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: sosovalue_state.json
+          key: sosovalue-state-${{ github.run_id }}
