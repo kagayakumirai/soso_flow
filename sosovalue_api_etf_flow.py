@@ -82,6 +82,13 @@ def pick_series(payload):
     """
     from datetime import datetime
 
+    print("[debug] type(payload) =", type(payload).__name__, flush=True)
+    if isinstance(payload, dict):
+        print("[debug] top-level keys:", list(payload.keys())[:20], flush=True)
+        if "data" in payload and isinstance(payload["data"], dict):
+            print("[debug] data keys:", list(payload["data"].keys())[:20], flush=True)
+
+
     DATE_KEYS = ("date", "tradingDay", "day", "statDate", "dateStr")
     ITEM_KEYS = ("items", "funds", "etfs", "records", "list", "rows", "data")
     NAME_KEYS = ("ticker", "fund", "name", "etf", "symbol")
