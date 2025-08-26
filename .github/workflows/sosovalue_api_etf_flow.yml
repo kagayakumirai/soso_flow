@@ -37,8 +37,9 @@ jobs:
           python -u sosovalue_api_etf_flow.py
 
       - name: Save send state
-        if: always()
+        if: ${{ always() && hashFiles('sosovalue_state.json') != '' }}
         uses: actions/cache/save@v4
         with:
           path: sosovalue_state.json
           key: sosovalue-state-${{ github.run_id }}
+
