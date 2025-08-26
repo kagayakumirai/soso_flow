@@ -43,3 +43,11 @@ jobs:
           path: sosovalue_state.json
           key: sosovalue-state-${{ github.run_id }}
 
+      - name: Upload payload dump (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sosovalue-last-payload
+          path: last_payload.json
+          if-no-files-found: ignore
+
