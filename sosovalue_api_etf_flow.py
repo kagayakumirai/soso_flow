@@ -59,48 +59,103 @@ def request_current_metrics(kind: str):
     return r.json()
 
 def pick_series(payload):
-    # ざっくり構造ログ
-    if isinstance(payload, dict):
-        log("[debug] top-level keys:", list(payload.keys())[:10])
-    else:
-        log("[debug] payload type:", type(payload).__name__)
+    """
+    JSON全体を再帰的に走査して、
+    - 日付キー: date / tradingDay / day / statDate / dateStr など
+    - アイテム配列: items / funds / etfs / records / list など
+    を見つけ、{date: date, items: [{name, net}, ...]} の配列に正規化して返す。
+    """
+    from datetime import datetime
 
-    # まず全体を保存しておく（デバッグに使える）
-    try:
-        PAYLOAD_DUMP.write_text(json.dumps(payload, ensure_ascii=False, indent=2)[:400000], encoding="utf-8")
-        log(f"[debug] payload dumped -> {PAYLOAD_DUMP}")
-    except Exception as e:
-        log(f"[warn] payload dump failed: {e}")
+    DATE_KEYS = ("date", "tradingDay", "day", "statDate", "dateStr")
+    ITEM_KEYS = ("items", "funds", "etfs", "records", "list", "rows", "data")
+    NAME_KEYS = ("ticker", "fund", "name", "etf", "symbol")
+    NET_KEYS  = ("net", "netFlow", "net_flow", "netUsd", "flow")
+    INFLOW_KEYS  = ("inflow", "inFlowUsd", "spotInflow")
+    OUTFLOW_KEYS = ("outflow", "outFlowUsd", "spotOutflow")
 
-    rows=[]
-    if isinstance(payload, dict):
-        cand=None
-        for k in ("data","result","items","list","rows"):
-            if k in payload and isinstance(payload[k], list):
-                cand = payload[k]; break
-        if isinstance(cand, list):
-            for rec in cand:
-                if not isinstance(rec, dict): continue
-                d = rec.get("date") or rec.get("tradingDay") or rec.get("day") or rec.get("statDate")
-                d2=None
-                for fmt in ("%Y-%m-%d","%Y/%m/%d","%d %b %Y"):
-                    try:
-                        d2 = datetime.strptime(d, fmt).date(); break
-                    except Exception: pass
-                items = rec.get("items") or rec.get("funds") or rec.get("etfs") or rec.get("records")
-                out=[]
-                if isinstance(items, list):
-                    for it in items:
-                        if not isinstance(it, dict): continue
-                        name = it.get("ticker") or it.get("fund") or it.get("name") or "ETF"
-                        val = it.get("net") or it.get("netFlow") or it.get("net_flow") or it.get("flow") or it.get("netUsd")
-                        if val is None and "inflow" in it and "outflow" in it:
-                            val = fnum(it.get("inflow")) - fnum(it.get("outflow"))
-                        out.append({"name": str(name), "net": fnum(val)})
-                if d2 and out:
-                    rows.append({"date": d2, "items": out})
-    log(f"[debug] parsed rows={len(rows)}; sample_dates={[r['date'].isoformat() for r in rows[:5]]}")
-    return rows
+    def to_date(s):
+        s = norm(s)
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d %b %Y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except Exception:
+                pass
+        return None
+
+    rows = []
+
+    def parse_item_dict(d: dict):
+        name = None
+        for k in NAME_KEYS:
+            if k in d:
+                name = d[k]; break
+        # 値の候補
+        val = None
+        for k in NET_KEYS:
+            if k in d:
+                val = d[k]; break
+        if val is None:
+            inflow = None
+            outflow = None
+            for k in INFLOW_KEYS:
+                if k in d: inflow = d[k]; break
+            for k in OUTFLOW_KEYS:
+                if k in d: outflow = d[k]; break
+            if inflow is not None or outflow is not None:
+                val = fnum(inflow) - fnum(outflow)
+        if name is None and val is None:
+            return None
+        return {"name": str(name or "ETF"), "net": fnum(val)}
+
+    # 親dictに date があり、かつ子に "アイテム配列" がいる形を拾う
+    def try_make_row(obj):
+        if not isinstance(obj, dict):
+            return None
+        d_val = None
+        for dk in DATE_KEYS:
+            if dk in obj:
+                d_val = to_date(obj[dk]); 
+                if d_val: break
+        if not d_val:
+            return None
+        items = None
+        for ik in ITEM_KEYS:
+            if ik in obj and isinstance(obj[ik], list):
+                items = obj[ik]; break
+        if not items:
+            return None
+        out = []
+        for it in items:
+            if isinstance(it, dict):
+                parsed = parse_item_dict(it)
+                if parsed: out.append(parsed)
+        if out:
+            return {"date": d_val, "items": out}
+        return None
+
+    # 再帰走査
+    def walk(x):
+        if isinstance(x, dict):
+            # まずこの dict 自体で行が作れるか
+            row = try_make_row(x)
+            if row: rows.append(row)
+            # 子を辿る
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(payload)
+    # できた行を日付でまとめ直す（バラバラに見つかった場合用）
+    by_date = {}
+    for r in rows:
+        by_date.setdefault(r["date"], []).extend(r["items"])
+    merged = [{"date": k, "items": v} for k, v in sorted(by_date.items())]
+    log(f"[debug] parsed rows={len(merged)}; sample_dates={[r['date'].isoformat() for r in merged[:5]]}")
+    return merged
+
 
 def build_embed(title_day, flows):
     net = sum(v for _,v in flows)
