@@ -56,6 +56,21 @@ def request_current_metrics(kind: str):
     r = requests.post(url, json={"type": kind}, headers=headers, timeout=25)
     log(f"[http] status={r.status_code} content-type={r.headers.get('content-type')}")
     r.raise_for_status()
+
+
+    data = r.json()
+    # ★ 常時ダンプ（先頭40万文字まで）
+    try:
+        from pathlib import Path
+        Path("last_payload.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2)[:400000],
+            encoding="utf-8"
+        )
+        print("[debug] payload dumped -> last_payload.json", flush=True)
+    except Exception as e:
+        print("[warn] payload dump failed:", e, flush=True)
+    return data
+
     return r.json()
 
 def pick_series(payload):
