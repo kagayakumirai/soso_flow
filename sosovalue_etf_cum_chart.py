@@ -13,6 +13,8 @@ import requests
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from datetime import datetime, timezone, timedelta
+import matplotlib.dates as mdates
 
 TITLE = "Cumulative Net Inflow (US Spot ETFs)"
 PNG_NAME = "etf_cum_flow.png"
@@ -99,33 +101,69 @@ def _extract_list(payload):
 
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
+
+    def _extract_list(p):
+        if isinstance(p, list): return p
+        if isinstance(p, dict):
+            data = p.get("data")
+            if isinstance(data, list): return data
+            if isinstance(data, dict):
+                for k in ("list", "records", "items", "rows"):
+                    v = data.get(k)
+                    if isinstance(v, list): return v
+            for k in ("list", "records", "items", "rows"):
+                v = p.get(k)
+                if isinstance(v, list): return v
+        return []
+
     lst = _extract_list(payload)
 
-    dates, cum_b = [], []
+    dates, cum_b, daily_b = [], [], []
     for row in lst:
         if not isinstance(row, dict):
             continue
         d = row.get("date")
-        v = row.get("cumNetInflow")
-        if not d or v is None:
+        cum = row.get("cumNetInflow")
+        day = row.get("totalNetInflow")
+        if not d or cum is None or day is None:
             continue
         dates.append(datetime.strptime(d, "%Y-%m-%d").date())
-        cum_b.append(float(v) / 1e9)  # USD -> $B
-    return dates, cum_b
+        cum_b.append(float(cum) / 1e9)     # 累積 USD -> $B
+        daily_b.append(float(day) / 1e9)   # 日次 USD -> $B
+    return dates, cum_b, daily_b
 
-def make_chart(btc_dates, btc_b, eth_dates, eth_b, out_path):
-    plt.figure(figsize=(10.5, 6))
-    # 軸を共有するように単純に2系列を描画
-    plt.plot(btc_dates, btc_b, label="BTC ETFs (cum $B)")
-    plt.plot(eth_dates, eth_b, label="ETH ETFs (cum $B)")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.title(TITLE)
-    plt.xlabel("Date")
-    plt.ylabel("Cumulative Net Inflow ($B)")
+
+def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b, out_path):
+    plt.figure(figsize=(11, 6.2))
+
+    # ---- 累積（左軸） ----
+    ax = plt.gca()
+    ax.plot(btc_dates, btc_cum_b, label="BTC ETFs (cum $B)")
+    ax.plot(eth_dates, eth_cum_b, label="ETH ETFs (cum $B)")
+    ax.set_ylabel("Cumulative Net Inflow ($B)")
+    ax.grid(True, alpha=0.3)
+
+    # ---- 日次（右軸、棒） ----
+    ax2 = ax.twinx()
+    # 日付を数値にして±0.4日ずらし（重なり回避）
+    x_btc = mdates.date2num(btc_dates) - 0.4
+    x_eth = mdates.date2num(eth_dates) + 0.4
+    ax2.bar(x_btc, btc_day_b, width=0.8, alpha=0.25, align="center", label="BTC daily ($B/day)")
+    ax2.bar(x_eth, eth_day_b, width=0.8, alpha=0.25, align="center", label="ETH daily ($B/day)")
+    ax2.set_ylabel("Daily Net Inflow ($B/day)")
+
+    # ---- 体裁 ----
+    ax.set_title("Cumulative Net Inflow (US Spot ETFs)")
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
+    # 2軸の凡例を合体
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax.legend(h1 + h2, l1 + l2, loc="upper left")
     plt.tight_layout()
     plt.savefig(out_path, dpi=150)
     plt.close()
+
 
 def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: float, last_date: str):
     content = f"**ETF cumulative net inflow (up to {last_date})**\n" \
