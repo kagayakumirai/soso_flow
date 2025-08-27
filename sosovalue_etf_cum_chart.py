@@ -185,9 +185,10 @@ def main():
     assert webhook, "DISCORD_WEBHOOK not set"
 
     # 取得
-    btc_d, btc_b = fetch_history("us-btc-spot")
-    eth_d, eth_b = fetch_history("us-eth-spot")
-    assert btc_d and eth_d, "no history data"
+    btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
+    eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
+    make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
+
 
     # 描画
     make_chart(btc_d, btc_b, eth_d, eth_b, PNG_NAME)
