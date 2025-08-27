@@ -3,7 +3,7 @@ name: SoSoValue ETF Flow (API)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0,3,6,9 * * *"   # UTC 0,3,6,9 = JST 9,12,15,18
+    - cron: "0 0,3,6,9 * * *"   # UTC 0/3/6/9 = JST 9/12/15/18
 
 jobs:
   run:
@@ -32,18 +32,22 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           SOSO_API_KEY: ${{ secrets.SOSO_API_KEY }}
-          SEND_ETH: "0"   # ETHも通知するなら "1"
+          # 銘柄別API（設定すれば内訳を取得。未設定なら集計のみ）
+          SOSO_FUNDS_API: ${{ secrets.SOSO_FUNDS_API }}
+          SEND_ETH: "1"
+          SHOW_TOP_N: "24"
+          # 月上限（デフォ1000）を変えたいときだけ指定
+          MAX_CALLS_PER_MONTH: "1000"
         run: |
+          set -euxo pipefail
           python -u sosovalue_api_etf_flow.py
 
       - name: Upload payload dump (if any)
-        if: always()
+        if: always() && hashFiles('last_payload.json') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: sosovalue-last-payload
+          name: sosovalue-last-payload-${{ github.run_attempt }}
           path: last_payload.json
-          if-no-files-found: ignore
-
 
       - name: Save send state
         if: ${{ always() && hashFiles('sosovalue_state.json') != '' }}
@@ -51,12 +55,3 @@ jobs:
         with:
           path: sosovalue_state.json
           key: sosovalue-state-${{ github.run_id }}
-
-      - name: Upload payload dump (if any)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sosovalue-last-payload
-          path: last_payload.json
-          if-no-files-found: ignore
-
