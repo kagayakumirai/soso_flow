@@ -11,8 +11,6 @@ import os, json, re, pathlib, sys, time, traceback
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Tuple
 import requests
-import numpy as np
-import matplotlib.pyplot as plt
 
 STATE_FILE   = pathlib.Path("sosovalue_state.json")
 PAYLOAD_DUMP = pathlib.Path("last_payload.json")  # 直近レスポンスのダンプ
