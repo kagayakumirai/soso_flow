@@ -61,9 +61,10 @@ jobs:
       - name: Run cumulative chart (BTC+ETH)
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          SOSO_API_KEY: ${{ secrets.SOSO_API_KEY }}           # v1 デモ
-          SOSO_CLIENT_ID: ${{ secrets.SOSO_CLIENT_ID }}       # v2 使うなら
+          SOSO_API_KEY: ${{ secrets.SOSO_API_KEY }}
+          SOSO_CLIENT_ID: ${{ secrets.SOSO_CLIENT_ID }}
           SOSO_CLIENT_SECRET: ${{ secrets.SOSO_CLIENT_SECRET }}
         run: |
           python -u sosovalue_etf_cum_chart.py
+
 
