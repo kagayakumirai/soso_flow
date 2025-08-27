@@ -190,14 +190,16 @@ def main():
     # 取得
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
     eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
-  
+    
     # 描画
     make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
-
-    # 送信
+    
+    # 送信（dates は list、cum は $B単位の list[float]）
     last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
-    send_to_discord(webhook, PNG_NAME, float(btc_cum.iloc[-1]),  float(eth_cum.iloc[-1]), last_date)
+    send_to_discord(webhook, PNG_NAME, btc_cum[-1], eth_cum[-1], last_date)
+    
     print("[ok] chart sent")
+
 
 if __name__ == "__main__":
     main()
