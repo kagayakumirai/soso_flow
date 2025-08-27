@@ -247,24 +247,13 @@ def main():
         return
 
     # BTC
-    emb, used = run_one("us-btc-spot", "BTC", api_key, yday)
-    add_api_calls(state, used)
-    if emb and state.get("last_btc_day") != yday.isoformat():
-        embeds.append(emb); state["last_btc_day"] = yday.isoformat()
-
-    # BTC
     emb, used, dt = run_one("us-btc-spot", "BTC", yday)
     add_api_calls(state, used)
     if emb and state.get("last_btc_day") != dt:
         embeds.append(emb)
         state["last_btc_day"] = dt
 
-    # ETH
-    if send_eth:
-        emb, used = run_one("us-eth-spot", "ETH", api_key, yday)
-        add_api_calls(state, used)
-        if emb and state.get("last_eth_day") != yday.isoformat():
-            embeds.append(emb); state["last_eth_day"] = yday.isoformat()
+
     # ETH
     if send_eth:
         emb, used, dt = run_one("us-eth-spot", "ETH", yday)
@@ -277,6 +266,8 @@ def main():
         r = requests.post(webhook, json={"embeds": embeds}, timeout=20)
         log(f"[discord] status={r.status_code}")
         r.raise_for_status()
+
+    
     save_state(state)
     log(f"[ok] done. monthly_calls[{_ym_utc()}]={state.get('monthly_calls',{}).get(_ym_utc(),0)}")
 
