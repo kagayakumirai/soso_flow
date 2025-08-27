@@ -57,20 +57,45 @@ def post_json(path, body, max_retries=3):
     raise RuntimeError("HTTP failed")
 
 def _extract_list(payload):
-    # payload が dict でも list でも安全に list を返す
+    """
+    payload から履歴の配列を取り出す。想定される形:
+      1) [ {...}, ... ]
+      2) {"data": {"list": [ ... ]}}
+      3) {"data": [ ... ]}               <-- 今ここで落ちた
+      4) {"list": [ ... ]} などのトップレベル
+    """
+    # 1) 配列そのもの
     if isinstance(payload, list):
         return payload
+
+    # 2) dict の場合を網羅
     if isinstance(payload, dict):
-        data = payload.get("data") or {}
-        lst = data.get("list")
-        if isinstance(lst, list):
-            return lst
-        # 念のためよくあるキーも見る
-        for k in ("records", "items", "rows"):
-            v = data.get(k) or payload.get(k)
+        data = payload.get("data")
+
+        # 2-a) data が配列
+        if isinstance(data, list):
+            return data
+
+        # 2-b) data が dict
+        if isinstance(data, dict):
+            lst = data.get("list")
+            if isinstance(lst, list):
+                return lst
+            # 他によくあるキー
+            for k in ("records", "items", "rows"):
+                v = data.get(k)
+                if isinstance(v, list):
+                    return v
+
+        # 2-c) トップレベルに list 系キーがある
+        for k in ("list", "records", "items", "rows"):
+            v = payload.get(k)
             if isinstance(v, list):
                 return v
+
+    # どれにも当てはまらなければ空配列
     return []
+
 
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
@@ -87,10 +112,6 @@ def fetch_history(kind: str):
         dates.append(datetime.strptime(d, "%Y-%m-%d").date())
         cum_b.append(float(v) / 1e9)  # USD -> $B
     return dates, cum_b
-
-
-
-
 
 def make_chart(btc_dates, btc_b, eth_dates, eth_b, out_path):
     plt.figure(figsize=(10.5, 6))
