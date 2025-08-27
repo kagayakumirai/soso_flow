@@ -300,11 +300,7 @@ def main():
     webhook = os.getenv("DISCORD_WEBHOOK");  assert webhook, "DISCORD_WEBHOOK not set"
     api_key = os.getenv("SOSO_API_KEY");     assert api_key, "SOSO_API_KEY not set"
     send_eth = os.getenv("SEND_ETH", "1") == "1"
-    btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
-    eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
-    make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
-
-
+  
     yday = jst_yesterday_date()
     log(f"[info] yday(JST) = {yday.isoformat()}")
 
