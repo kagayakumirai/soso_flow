@@ -193,7 +193,7 @@ def main():
 
     # 送信
     last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
-    send_to_discord(webhook, PNG_NAME, btc_b[-1], eth_b[-1], last_date)
+    send_to_discord(webhook, PNG_NAME, btc_d[-1], eth_d[-1], last_date)
     print("[ok] chart sent")
 
 if __name__ == "__main__":
