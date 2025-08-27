@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+SoSoValue ETF Flow Sentry (BTC+ETH, per-fund if available)
+- 前日(JST)の US BTC/ETH Spot ETF のネットフローを Discord へ通知
+- 銘柄別API(SOSO_FUNDS_API) が設定されていれば内訳を取得、無ければ集計APIにフォールバック
+- 既送信日の重複送信ガード、payload ダンプ、月間コール上限の自己防衛つき
+"""
 
-import os, json, re, pathlib, sys, traceback
+import os, json, re, pathlib, sys, time, traceback
 from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Tuple
 import requests
 
-STATE_FILE = pathlib.Path("sosovalue_state.json")
-PAYLOAD_DUMP = pathlib.Path("last_payload.json")
+STATE_FILE   = pathlib.Path("sosovalue_state.json")
+PAYLOAD_DUMP = pathlib.Path("last_payload.json")  # 直近レスポンスのダンプ
+DEFAULT_BASE = "https://api.sosovalue.xyz"
 
+# === ユーティリティ ===
 def log(*a): print(*a, flush=True)
-
-def load_state():
-    if STATE_FILE.exists():
-        try: return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-        except Exception: return {}
-    return {}
-
-def save_state(d):
-    STATE_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def jst_yesterday_date():
     today_jst = datetime.now(timezone.utc) + timedelta(hours=9)
@@ -36,203 +36,231 @@ def fnum(x) -> float:
         except Exception: return 0.0
     m = re.match(r'^(-?\d+(?:\.\d+)?)([mbMB])?$', s)
     if m:
-        val = float(m.group(1)); suf = m.group(2)
-        if suf and suf.lower()=="b": val *= 1000.0
+        val = float(m.group(1))
+        if (m.group(2) or "").lower() == "b":
+            val *= 1000.0
         return val
     try: return float(s)
     except Exception: return 0.0
 
-def request_current_metrics(kind: str):
-    base = os.getenv("SOSO_BASE", "https://api.sosovalue.xyz")
-    url = f"{base}/openapi/v2/etf/currentEtfDataMetrics"
-    api_key = os.getenv("SOSO_API_KEY")
-    if not api_key: raise RuntimeError("SOSO_API_KEY not set")
+def load_state() -> Dict[str, Any]:
+    if STATE_FILE.exists():
+        try: return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except Exception: return {}
+    return {}
+
+def save_state(d: Dict[str, Any]):
+    STATE_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
+
+# === 月間コール上限（自己防衛） ===
+MAX_CALLS_PER_MONTH = int(os.getenv("MAX_CALLS_PER_MONTH", "1000"))
+
+def _ym_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+def can_use_api(state: Dict[str, Any], needed: int) -> bool:
+    ym = _ym_utc()
+    used = state.get("monthly_calls", {}).get(ym, 0)
+    return (used + needed) <= MAX_CALLS_PER_MONTH
+
+def add_api_calls(state: Dict[str, Any], used: int):
+    ym = _ym_utc()
+    calls = state.setdefault("monthly_calls", {})
+    calls[ym] = calls.get(ym, 0) + used
+
+# === HTTP（429/5xx リトライ & ダンプ） ===
+def post_json(url: str, body: dict, api_key: str, max_retries: int = 3) -> dict:
     headers = {
         "x-soso-api-key": api_key,
         "accept": "application/json",
         "user-agent": "etf-flow-sentry/1.0"
     }
-    log(f"[http] POST {url} kind={kind}")
-    r = requests.post(url, json={"type": kind}, headers=headers, timeout=25)
-    log(f"[http] status={r.status_code} content-type={r.headers.get('content-type')}")
-    r.raise_for_status()
+    backoff = 2.0
+    last_resp = None
+    for attempt in range(1, max_retries + 1):
+        resp = requests.post(url, json=body, headers=headers, timeout=30)
+        last_resp = resp
+        log(f"[http] POST {url} -> {resp.status_code} ({resp.headers.get('content-type','')})")
+        if resp.status_code == 200:
+            data = resp.json()
+            try:
+                PAYLOAD_DUMP.write_text(json.dumps(data, ensure_ascii=False, indent=2)[:400000], encoding="utf-8")
+                log(f"[debug] payload dumped -> {PAYLOAD_DUMP}")
+            except Exception:
+                pass
+            return data
+        if resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+            time.sleep(backoff); backoff *= 2
+            continue
+        resp.raise_for_status()
+    # ここに来ない想定だが保険
+    if last_resp is not None:
+        last_resp.raise_for_status()
+    raise RuntimeError("post_json failed without response")
 
-
-    data = r.json()
-    # ★ 常時ダンプ（先頭40万文字まで）
+# === APIラッパ ===
+def request_aggregate(kind: str, api_key: str) -> Tuple[Any, Any, int]:
+    base = os.getenv("SOSO_BASE", DEFAULT_BASE)
+    url  = f"{base}/openapi/v2/etf/currentEtfDataMetrics"
+    data = post_json(url, {"type": kind}, api_key)
     try:
-        from pathlib import Path
-        Path("last_payload.json").write_text(
-            json.dumps(data, ensure_ascii=False, indent=2)[:400000],
-            encoding="utf-8"
-        )
-        print("[debug] payload dumped -> last_payload.json", flush=True)
-    except Exception as e:
-        print("[warn] payload dump failed:", e, flush=True)
-    return data
+        dn = (data.get("data") or {}).get("dailyNetInflow") or {}
+        day = datetime.strptime(dn.get("lastUpdateDate"), "%Y-%m-%d").date()
+        net_musd = fnum(dn.get("value")) / 1e6  # USD → $m
+        return day, net_musd, 1
+    except Exception:
+        return None, None, 1
 
-    return r.json()
+def request_fund_breakdown(kind: str, api_key: str) -> Tuple[List[Dict[str, Any]], int]:
+    funds_api = os.getenv("SOSO_FUNDS_API", "").strip()
+    if not funds_api:
+        log("[info] SOSO_FUNDS_API not set -> skip per-fund (aggregate only)")
+        return [], 0
+    data = post_json(funds_api, {"type": kind}, api_key)
+    return pick_series(data), 1
 
-def pick_series(payload):
-    """
-    JSON全体を再帰的に走査して、
-    - 日付キー: date / tradingDay / day / statDate / dateStr など
-    - アイテム配列: items / funds / etfs / records / list など
-    を見つけ、{date: date, items: [{name, net}, ...]} の配列に正規化して返す。
-    """
+# === 再帰パーサ（銘柄別） ===
+def pick_series(payload: Any) -> List[Dict[str, Any]]:
     from datetime import datetime
-
-    print("[debug] type(payload) =", type(payload).__name__, flush=True)
-    if isinstance(payload, dict):
-        print("[debug] top-level keys:", list(payload.keys())[:20], flush=True)
-        if "data" in payload and isinstance(payload["data"], dict):
-            print("[debug] data keys:", list(payload["data"].keys())[:20], flush=True)
-
-
-    DATE_KEYS = ("date", "tradingDay", "day", "statDate", "dateStr")
-    ITEM_KEYS = ("items", "funds", "etfs", "records", "list", "rows", "data")
-    NAME_KEYS = ("ticker", "fund", "name", "etf", "symbol")
-    NET_KEYS  = ("net", "netFlow", "net_flow", "netUsd", "flow")
-    INFLOW_KEYS  = ("inflow", "inFlowUsd", "spotInflow")
-    OUTFLOW_KEYS = ("outflow", "outFlowUsd", "spotOutflow")
+    DATE_KEYS = ("date","tradingDay","day","statDate","dateStr","date_time")
+    ITEM_KEYS = ("items","funds","etfs","records","list","rows","data")
+    NAME_KEYS = ("ticker","fund","name","etf","symbol")
+    NET_KEYS  = ("net","netFlow","net_flow","netUsd","flow","net_usd")
+    INFLOW_KEYS  = ("inflow","inFlowUsd","spotInflow")
+    OUTFLOW_KEYS = ("outflow","outFlowUsd","spotOutflow")
 
     def to_date(s):
         s = norm(s)
-        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d %b %Y"):
-            try:
-                return datetime.strptime(s, fmt).date()
-            except Exception:
-                pass
+        for fmt in ("%Y-%m-%d","%Y/%m/%d","%d %b %Y"):
+            try: return datetime.strptime(s, fmt).date()
+            except Exception: pass
         return None
-
-    rows = []
 
     def parse_item_dict(d: dict):
-        name = None
-        for k in NAME_KEYS:
-            if k in d:
-                name = d[k]; break
-        # 値の候補
-        val = None
-        for k in NET_KEYS:
-            if k in d:
-                val = d[k]; break
+        name = next((d[k] for k in NAME_KEYS if k in d), None)
+        val  = next((d[k] for k in NET_KEYS  if k in d), None)
         if val is None:
-            inflow = None
-            outflow = None
-            for k in INFLOW_KEYS:
-                if k in d: inflow = d[k]; break
-            for k in OUTFLOW_KEYS:
-                if k in d: outflow = d[k]; break
+            inflow  = next((d.get(k) for k in INFLOW_KEYS  if k in d), None)
+            outflow = next((d.get(k) for k in OUTFLOW_KEYS if k in d), None)
             if inflow is not None or outflow is not None:
                 val = fnum(inflow) - fnum(outflow)
-        if name is None and val is None:
-            return None
+        if name is None and val is None: return None
         return {"name": str(name or "ETF"), "net": fnum(val)}
 
-    # 親dictに date があり、かつ子に "アイテム配列" がいる形を拾う
     def try_make_row(obj):
-        if not isinstance(obj, dict):
-            return None
-        d_val = None
-        for dk in DATE_KEYS:
-            if dk in obj:
-                d_val = to_date(obj[dk]); 
-                if d_val: break
-        if not d_val:
-            return None
-        items = None
-        for ik in ITEM_KEYS:
-            if ik in obj and isinstance(obj[ik], list):
-                items = obj[ik]; break
-        if not items:
-            return None
-        out = []
+        if not isinstance(obj, dict): return None
+        d_val = next((to_date(obj[k]) for k in DATE_KEYS if k in obj), None)
+        if not d_val: return None
+        items = next((obj[k] for k in ITEM_KEYS if k in obj and isinstance(obj[k], list)), None)
+        if not items: return None
+        out=[]
         for it in items:
             if isinstance(it, dict):
-                parsed = parse_item_dict(it)
-                if parsed: out.append(parsed)
-        if out:
-            return {"date": d_val, "items": out}
-        return None
+                p = parse_item_dict(it)
+                if p: out.append(p)
+        return {"date": d_val, "items": out} if out else None
 
-    # 再帰走査
+    rows=[]
     def walk(x):
         if isinstance(x, dict):
-            # まずこの dict 自体で行が作れるか
-            row = try_make_row(x)
-            if row: rows.append(row)
-            # 子を辿る
-            for v in x.values():
-                walk(v)
+            r = try_make_row(x)
+            if r: rows.append(r)
+            for v in x.values(): walk(v)
         elif isinstance(x, list):
-            for v in x:
-                walk(v)
-
+            for v in x: walk(v)
     walk(payload)
-    # できた行を日付でまとめ直す（バラバラに見つかった場合用）
-    by_date = {}
+
+    by_date={}
     for r in rows:
         by_date.setdefault(r["date"], []).extend(r["items"])
-    merged = [{"date": k, "items": v} for k, v in sorted(by_date.items())]
+    merged=[{"date": d, "items": its} for d,its in sorted(by_date.items())]
     log(f"[debug] parsed rows={len(merged)}; sample_dates={[r['date'].isoformat() for r in merged[:5]]}")
     return merged
 
-
-def build_embed(title_day, flows):
+# === Discord ===
+def build_embed(title: str, flows: List[Tuple[str,float]]):
+    top_n = int(os.getenv("SHOW_TOP_N", "24"))  # Discordのフィールド上限に配慮
+    flows_sorted = sorted(flows, key=lambda x: abs(x[1]), reverse=True)[:top_n]
     net = sum(v for _,v in flows)
     color = 0x2ecc71 if net>0 else 0xe74c3c if net<0 else 0x95a5a6
-    shown = [(k,v) for k,v in flows if abs(v)>0.0] or flows[:6]
-    fields=[{"name":k,"value":f"{'🟢' if v>0 else '🔴' if v<0 else '⚪'} {v:+,.1f} $m","inline":True} for k,v in shown]
-    return {"title":f"{title_day} ETF Net Flows ($m)","color":color,"fields":fields,"footer":{"text":f"Net: {net:+,.1f} $m • Source: SoSoValue API"}}
+    fields = [{"name": k, "value": f"{'🟢' if v>0 else '🔴' if v<0 else '⚪'} {v:+,.1f} $m", "inline": True}
+              for k,v in flows_sorted]
+    return {
+        "title": title,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"Net: {net:+,.1f} $m • Source: SoSoValue API"}
+    }
 
+# === 1アセット実行 ===
+def run_one(kind: str, tag: str, api_key: str, yday) -> Tuple[Any, int]:
+    used_calls = 0
+
+    # 1) 銘柄別（設定があれば）
+    series, c = request_fund_breakdown(kind, api_key); used_calls += c
+    row = next((r for r in series if r["date"] == yday), None)
+    flows: List[Tuple[str,float]] = []
+    title = yday.strftime("%d %b %Y") + f" ({tag})"
+
+    if row:
+        flows = [(it["name"], it["net"]) for it in row["items"]]
+    else:
+        # 2) 集計フォールバック
+        day, net_musd, c2 = request_aggregate(kind, api_key); used_calls += c2
+        if day == yday and net_musd is not None:
+            flows = [(f"Total (All {tag} ETFs)", net_musd)]
+            title += " (aggregate)"
+
+    if flows:
+        return build_embed(title, flows), used_calls
+    return None, used_calls
+
+# === メイン ===
 def main():
-    log("[boot] SoSoValue ETF Flow Sentry (direct API, verbose)")
-    webhook = os.getenv("DISCORD_WEBHOOK"); 
-    if not webhook: raise RuntimeError("DISCORD_WEBHOOK not set")
-    send_eth = os.getenv("SEND_ETH","0")=="1"
-    yday = jst_yesterday_date(); log(f"[info] yday(JST) = {yday.isoformat()}")
+    log("[boot] SoSoValue ETF Flow Sentry (limits-aware)")
+    webhook = os.getenv("DISCORD_WEBHOOK");  assert webhook, "DISCORD_WEBHOOK not set"
+    api_key = os.getenv("SOSO_API_KEY");     assert api_key, "SOSO_API_KEY not set"
+    send_eth = os.getenv("SEND_ETH", "1") == "1"
+
+    yday = jst_yesterday_date()
+    log(f"[info] yday(JST) = {yday.isoformat()}")
 
     state = load_state()
-    embeds=[]
+    embeds = []
+
+    # 事前見積もり（最悪ケースでチェック：銘柄別APIが設定されていれば各2コール、無ければ各1）
+    worst_per_asset = 2 if os.getenv("SOSO_FUNDS_API", "").strip() else 1
+    assets = 1 + (1 if send_eth else 0)
+    needed = worst_per_asset * assets
+
+    if not can_use_api(state, needed):
+        msg = f"⚠️ SoSoValue API monthly limit would exceed ({state.get('monthly_calls',{}).get(_ym_utc(),0)} + {needed} > {MAX_CALLS_PER_MONTH}). Skipping."
+        log("[warn]", msg)
+        try: requests.post(webhook, json={"content": msg}, timeout=15)
+        except Exception: pass
+        return
 
     # BTC
-    btc_payload = request_current_metrics("us-btc-spot")
-    btc_series = pick_series(btc_payload)
-    btc_row = next((r for r in btc_series if r["date"]==yday), None)
-    log(f"[debug] btc_row_found = {btc_row is not None}")
-    if btc_row:
-        btc_flows = [(it["name"], it["net"]) for it in btc_row["items"]]
-        if yday.isoformat()!=state.get("last_btc_day"):
-            embeds.append(build_embed(yday.strftime("%d %b %Y")+" (BTC)", btc_flows))
-            state["last_btc_day"]=yday.isoformat()
-        else:
-            log("[info] BTC already sent for this day (dedup)")
+    emb, used = run_one("us-btc-spot", "BTC", api_key, yday)
+    add_api_calls(state, used)
+    if emb and state.get("last_btc_day") != yday.isoformat():
+        embeds.append(emb); state["last_btc_day"] = yday.isoformat()
 
-    # ETH (optional)
+    # ETH
     if send_eth:
-        eth_payload = request_current_metrics("us-eth-spot")
-        eth_series = pick_series(eth_payload)
-        eth_row = next((r for r in eth_series if r["date"]==yday), None)
-        log(f"[debug] eth_row_found = {eth_row is not None}")
-        if eth_row:
-            eth_flows = [(it["name"], it["net"]) for it in eth_row["items"]]
-            if yday.isoformat()!=state.get("last_eth_day"):
-                embeds.append(build_embed(yday.strftime("%d %b %Y")+" (ETH)", eth_flows))
-                state["last_eth_day"]=yday.isoformat()
-            else:
-                log("[info] ETH already sent for this day (dedup)")
+        emb, used = run_one("us-eth-spot", "ETH", api_key, yday)
+        add_api_calls(state, used)
+        if emb and state.get("last_eth_day") != yday.isoformat():
+            embeds.append(emb); state["last_eth_day"] = yday.isoformat()
 
     if embeds:
-        resp = requests.post(webhook, json={"embeds":embeds}, timeout=20)
-        log(f"[discord] status={resp.status_code}")
-        resp.raise_for_status()
-        save_state(state)
-        log(f"[ok] sent embeds x{len(embeds)} for {yday.isoformat()}")
-    else:
-        log("[info] No data yet (silent or already sent)")
+        r = requests.post(webhook, json={"embeds": embeds}, timeout=20)
+        log(f"[discord] status={r.status_code}")
+        r.raise_for_status()
+    save_state(state)
+    log(f"[ok] done. monthly_calls[{_ym_utc()}]={state.get('monthly_calls',{}).get(_ym_utc(),0)}")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     try:
         main()
     except Exception:
