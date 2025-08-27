@@ -15,6 +15,7 @@ import requests
 STATE_FILE   = pathlib.Path("sosovalue_state.json")
 PAYLOAD_DUMP = pathlib.Path("last_payload.json")  # 直近レスポンスのダンプ
 DEFAULT_BASE = "https://api.sosovalue.xyz"
+FORCE_SEND = os.getenv("FORCE_SEND", "0") == "1"
 
 # === ユーティリティ ===
 def log(*a): print(*a, flush=True)
@@ -193,27 +194,32 @@ def build_embed(title: str, flows: List[Tuple[str,float]]):
     }
 
 # === 1アセット実行 ===
-def run_one(kind: str, tag: str, api_key: str, yday) -> Tuple[Any, int]:
-    used_calls = 0
+def run_one(kind: str, tag: str, yday):
+    used_calls = 1
+    payload = fetch_metrics(kind)
 
-    # 1) 銘柄別（設定があれば）
-    series, c = request_fund_breakdown(kind, api_key); used_calls += c
-    row = next((r for r in series if r["date"] == yday), None)
-    flows: List[Tuple[str,float]] = []
-    title = yday.strftime("%d %b %Y") + f" ({tag})"
+    flows = []
+    title = None
+    dedup_date = None  # ← 実際に送る日付（重複判定用）
 
-    if row:
-        flows = [(it["name"], it["net"]) for it in row["items"]]
+    # 銘柄別（v2なら同梱）
+    items = parse_funds_from_metrics(payload)
+    if items:
+        flows = [(it["name"], it["net"]/1e6) for it in items]   # USD → $m
+        title = yday.strftime("%d %b %Y") + f" ({tag})"
+        dedup_date = yday.isoformat()
     else:
-        # 2) 集計フォールバック
-        day, net_musd, c2 = request_aggregate(kind, api_key); used_calls += c2
-        if day == yday and net_musd is not None:
+        # 集計のみ（v1デモなど）
+        day, net_musd = parse_aggregate_from_metrics(payload)
+        if day == yday or FORCE_SEND:
+            target_day = day or yday   # dayが無ければydayで代用
             flows = [(f"Total (All {tag} ETFs)", net_musd)]
-            title += " (aggregate)"
+            title = target_day.strftime("%d %b %Y") + f" ({tag}, aggregate)"
+            dedup_date = target_day.isoformat()
 
     if flows:
-        return build_embed(title, flows), used_calls
-    return None, used_calls
+        return build_embed(title, flows), used_calls, dedup_date
+    return None, used_calls, None
 
 # === メイン ===
 def main():
