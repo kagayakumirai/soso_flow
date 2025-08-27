@@ -89,6 +89,9 @@ def fetch_history(kind: str):
     return dates, cum_b
 
 
+
+
+
 def make_chart(btc_dates, btc_b, eth_dates, eth_b, out_path):
     plt.figure(figsize=(10.5, 6))
     # 軸を共有するように単純に2系列を描画
