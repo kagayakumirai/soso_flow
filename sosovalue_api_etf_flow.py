@@ -193,6 +193,79 @@ def build_embed(title: str, flows: List[Tuple[str,float]]):
         "footer": {"text": f"Net: {net:+,.1f} $m • Source: SoSoValue API"}
     }
 
+# === metrics 取得（v2/v1 両対応） ==========================================
+def fetch_metrics(kind: str) -> dict:
+    """
+    /openapi/v2/etf/currentEtfDataMetrics を叩いて payload を返す。
+    - v2: SOSO_CLIENT_ID / SOSO_CLIENT_SECRET があれば openapi.sosovalue.com
+    - v1: それが無ければ api.sosovalue.xyz （x-soso-api-key）
+    既存の post_json_full or post_json のどちらがあっても動くようにしてある。
+    """
+    base_v2 = os.getenv("SOSO_BASE", "https://openapi.sosovalue.com")
+    base_v1 = os.getenv("SOSO_BASE", "https://api.sosovalue.xyz")  # デモ
+
+    is_v2 = bool(os.getenv("SOSO_CLIENT_ID") and os.getenv("SOSO_CLIENT_SECRET"))
+    if is_v2:
+        path = "/openapi/v2/etf/currentEtfDataMetrics"
+        # 新実装が入っている場合
+        try:
+            return post_json_full(path, {"type": kind})
+        except NameError:
+            # 念のため直URLもサポート
+            url = f"{base_v2}{path}"
+            headers = {
+                "client-id": os.getenv("SOSO_CLIENT_ID"),
+                "client-secret": os.getenv("SOSO_CLIENT_SECRET"),
+                "accept": "application/json",
+                "content-type": "application/json",
+                "user-agent": "etf-flow-sentry/2.0"
+            }
+            r = requests.post(url, json={"type": kind}, headers=headers, timeout=30)
+            r.raise_for_status()
+            return r.json()
+    else:
+        # v1 デモキー（集計のみ）
+        path = "/openapi/v2/etf/currentEtfDataMetrics"
+        try:
+            # post_json_full が無い環境もあるので、まずは post_json_full を試す
+            return post_json_full(path, {"type": kind})
+        except NameError:
+            # 旧 post_json( url, body, api_key ) がある前提でフォールバック
+            api_key = os.getenv("SOSO_API_KEY")
+            url = f"{base_v1}{path}"
+            return post_json(url, {"type": kind}, api_key)
+
+# === metrics payload のパース補助 ========================================
+from datetime import datetime
+
+def parse_aggregate_from_metrics(payload):
+    """aggregate（合計）値を (date, net_musd) で返す"""
+    dn = (payload.get("data") or {}).get("dailyNetInflow") or {}
+    day = None
+    if dn.get("lastUpdateDate"):
+        day = datetime.strptime(dn["lastUpdateDate"], "%Y-%m-%d").date()
+    net_musd = fnum(dn.get("value")) / 1e6 if dn.get("value") is not None else 0.0
+    return day, net_musd
+
+def parse_funds_from_metrics(payload):
+    """
+    v2 のとき data.list に銘柄別が入る。
+    戻り値: [{"name": ticker, "net": <USD>}, ...]
+    """
+    lst = (payload.get("data") or {}).get("list") or []
+    out = []
+    for rec in lst:
+        name = rec.get("ticker") or rec.get("id") or rec.get("institute") or "ETF"
+        dn = rec.get("dailyNetInflow") or {}
+        # status==3 は未反映(null)なので除外
+        if dn.get("status") == 3:
+            continue
+        val = fnum(dn.get("value"))
+        out.append({"name": str(name), "net": val})
+    return out
+
+
+
 # === 1アセット実行 ===
 def run_one(kind: str, tag: str, yday):
     used_calls = 1
