@@ -38,6 +38,7 @@ jobs:
           SHOW_TOP_N: "24"
           # 月上限（デフォ1000）を変えたいときだけ指定
           MAX_CALLS_PER_MONTH: "1000"
+          FORCE_SEND: "1"     # ← これで aggregate を強制送信
         run: |
           set -euxo pipefail
           python -u sosovalue_api_etf_flow.py
