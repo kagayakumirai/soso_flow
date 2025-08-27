@@ -56,18 +56,38 @@ def post_json(path, body, max_retries=3):
         r.raise_for_status()
     raise RuntimeError("HTTP failed")
 
+def _extract_list(payload):
+    # payload が dict でも list でも安全に list を返す
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        data = payload.get("data") or {}
+        lst = data.get("list")
+        if isinstance(lst, list):
+            return lst
+        # 念のためよくあるキーも見る
+        for k in ("records", "items", "rows"):
+            v = data.get(k) or payload.get(k)
+            if isinstance(v, list):
+                return v
+    return []
+
 def fetch_history(kind: str):
-    data = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
-    lst = (data.get("data") or {}).get("list") or []
-    # 返ってくる値はUSD。cumNetInflow を $B 表示に直す
+    payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
+    lst = _extract_list(payload)
+
     dates, cum_b = [], []
     for row in lst:
+        if not isinstance(row, dict):
+            continue
         d = row.get("date")
         v = row.get("cumNetInflow")
-        if not d or v is None: continue
+        if not d or v is None:
+            continue
         dates.append(datetime.strptime(d, "%Y-%m-%d").date())
-        cum_b.append(float(v)/1e9)  # USD -> $B
+        cum_b.append(float(v) / 1e9)  # USD -> $B
     return dates, cum_b
+
 
 def make_chart(btc_dates, btc_b, eth_dates, eth_b, out_path):
     plt.figure(figsize=(10.5, 6))
