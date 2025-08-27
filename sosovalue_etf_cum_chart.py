@@ -165,15 +165,16 @@ def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b,
     plt.close()
 
 
-def send_to_discord(webhook: str, png_path: str, float(btc_cum.iloc[-1]), float(eth_cum.iloc[-1]), last_date: str):
+def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: float, last_date: str):
     content = f"**ETF cumulative net inflow (up to {last_date})**\n" \
-        f"BTC: {btc_last_b:,.2f} B | ETH: {eth_last_b:,.2f} B"
-
+              f"BTC: {btc_last_b:,.2f} B | ETH: {eth_last_b:,.2f} B"
     embed = {
         "title": TITLE,
         "image": {"url": f"attachment://{PNG_NAME}"},
         "footer": {"text": "Source: SoSoValue API"}
     }
+    # ← ここで実際に Discord POST してるはず
+
     payload = {"content": content, "embeds": [embed]}
     with open(png_path, "rb") as f:
         files = {"file": (PNG_NAME, f, "image/png")}
@@ -184,6 +185,7 @@ def send_to_discord(webhook: str, png_path: str, float(btc_cum.iloc[-1]), float(
 def main():
     webhook = os.getenv("DISCORD_WEBHOOK")
     assert webhook, "DISCORD_WEBHOOK not set"
+    last_date = max(btc_d["date"].iloc[-1], eth_d["date"].iloc[-1]).strftime("%Y-%m-%d")
 
     # 取得
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
@@ -194,7 +196,7 @@ def main():
 
     # 送信
     last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
-    send_to_discord(webhook, PNG_NAME, btc_d[-1], eth_d[-1], last_date)
+    send_to_discord(webhook, PNG_NAME, float(btc_cum.iloc[-1]),  float(eth_cum.iloc[-1], last_date)
     print("[ok] chart sent")
 
 if __name__ == "__main__":
