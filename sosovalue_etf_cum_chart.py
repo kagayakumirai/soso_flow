@@ -167,7 +167,8 @@ def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b,
 
 def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: float, last_date: str):
     content = f"**ETF cumulative net inflow (up to {last_date})**\n" \
-              f"BTC: {btc_last_b:,.2f} B | ETH: {eth_last_b:,.2f} B"
+        f"BTC: {btc_last_b:,.2f} B | ETH: {eth_last_b:,.2f} B"
+
     embed = {
         "title": TITLE,
         "image": {"url": f"attachment://{PNG_NAME}"},
