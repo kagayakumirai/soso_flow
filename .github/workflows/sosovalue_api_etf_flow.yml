@@ -27,6 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install requests
+          pip install requests matplotlib
 
       - name: Run SoSoValue API Sentry
         env:
