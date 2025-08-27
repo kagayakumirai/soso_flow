@@ -57,7 +57,7 @@ jobs:
           path: sosovalue_state.json
           key: sosovalue-state-${{ github.run_id }}
 
-            - name: Run cumulative chart (BTC+ETH)
+      - name: Run cumulative chart (BTC+ETH)
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
           SOSO_API_KEY: ${{ secrets.SOSO_API_KEY }}           # v1 デモ
