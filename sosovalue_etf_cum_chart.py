@@ -187,11 +187,9 @@ def main():
     # 取得
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
     eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
-    make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
-
-
+  
     # 描画
-    make_chart(btc_d, btc_b, eth_d, eth_b, PNG_NAME)
+    make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
 
     # 送信
     last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
