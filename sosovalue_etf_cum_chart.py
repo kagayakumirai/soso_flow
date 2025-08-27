@@ -185,7 +185,7 @@ def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: 
 def main():
     webhook = os.getenv("DISCORD_WEBHOOK")
     assert webhook, "DISCORD_WEBHOOK not set"
-    last_date = max(btc_d["date"].iloc[-1], eth_d["date"].iloc[-1]).strftime("%Y-%m-%d")
+    last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
 
     # 取得
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
@@ -195,7 +195,6 @@ def main():
     make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
     
     # 送信（dates は list、cum は $B単位の list[float]）
-    last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
     send_to_discord(webhook, PNG_NAME, btc_cum[-1], eth_cum[-1], last_date)
     
     print("[ok] chart sent")
