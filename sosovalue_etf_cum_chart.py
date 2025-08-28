@@ -111,24 +111,40 @@ def is_confirmed_yday(send_eth: bool = True) -> tuple[bool, str, str]:
     latest = max(candidates)
     return (latest >= yday), yday_str, latest.strftime("%Y-%m-%d")
 
+from datetime import datetime, timezone, timedelta
 
-def fetch_history(kind: str):
+def _last_hist_date(kind: str):
+    """historicalInflowChart からその種別の最新確定日(date)を返す"""
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
     lst = _extract_list(payload)
+    dates = []
+    for it in lst:
+        d = it.get("date")
+        if d:
+            dates.append(datetime.strptime(d, "%Y-%m-%d").date())
+    return max(dates) if dates else None
 
-    dates, cum_b, daily_b = [], [], []
-    for row in lst:
-        if not isinstance(row, dict):
-            continue
-        d = row.get("date")
-        cum = row.get("cumNetInflow")
-        day = row.get("totalNetInflow")
-        if not d or cum is None or day is None:
-            continue
-        dates.append(datetime.strptime(d, "%Y-%m-%d").date())
-        cum_b.append(float(cum) / 1e9)     # 累積 USD -> $B
-        daily_b.append(float(day) / 1e9)   # 日次 USD -> $B
-    return dates, cum_b, daily_b
+def is_confirmed_yday(send_eth: bool = True) -> tuple[bool, str, str]:
+    """
+    前日(JST)が確定していれば True。
+    戻り値: (confirmed?, yday_str, last_hist_str)
+    """
+    now_jst = datetime.now(timezone(timedelta(hours=9)))
+    yday = (now_jst.date() - timedelta(days=1))
+    yday_str = yday.strftime("%Y-%m-%d")
+
+    # BTC は必須、ETH は SEND_ETH=1 のときだけ見る
+    ld_btc = _last_hist_date("us-btc-spot")
+    ld_eth = _last_hist_date("us-eth-spot") if send_eth else None
+
+    candidates = [d for d in (ld_btc, ld_eth) if d]
+    if not candidates:
+        return False, yday_str, "N/A"
+
+    latest = max(candidates)
+    return (latest >= yday), yday_str, latest.strftime("%Y-%m-%d")
+
+
 
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
@@ -150,8 +166,6 @@ def fetch_history(kind: str):
         daily_b.append(float(day) / 1e9)
     return dates, cum_b, daily_b
 
-
-    lst = _extract_list(payload)
 
     dates, cum_b, daily_b = [], [], []
     for row in lst:
