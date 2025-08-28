@@ -114,15 +114,10 @@ def is_confirmed_yday(send_eth: bool = True):
     return (latest >= yday), yday_str, latest.strftime("%Y-%m-%d")
 
 def fetch_history(kind: str):
-    """
-    dates: list[date]
-    cum_b: list[float]  # 累計 ($B)
-    day_b: list[float]  # 日次 ($B)
-    """
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
     lst = _extract_list(payload)
 
-    dates, cum_b, day_b = [], [], []
+    dates, cum_b, daily_b = [], [], []
     for row in lst:
         if not isinstance(row, dict):
             continue
@@ -132,9 +127,16 @@ def fetch_history(kind: str):
         if not d or cum is None or day is None:
             continue
         dates.append(datetime.strptime(d, "%Y-%m-%d").date())
-        cum_b.append(float(cum) / 1e9)
-        day_b.append(float(day) / 1e9)
-    return dates, cum_b, day_b
+        cum_b.append(float(cum) / 1e9)     # USD → $B
+        daily_b.append(float(day) / 1e9)   # USD/day → $B/day
+
+    # ←← ここを追加：日付でソートしてから返す
+    if dates:
+        packed = sorted(zip(dates, cum_b, daily_b), key=lambda x: x[0])
+        dates, cum_b, daily_b = map(list, zip(*packed))
+
+    return dates, cum_b, daily_b
+
 
 # ------------------ drawing ------------------
 def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b, out_path):
