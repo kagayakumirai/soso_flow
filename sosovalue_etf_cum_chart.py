@@ -203,22 +203,27 @@ def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b,
 
 
 
-def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: float, last_date: str):
-    content = f"**ETF cumulative net inflow (up to {last_date})**\n" \
-              f"BTC: {btc_last_b:,.2f} B | ETH: {eth_last_b:,.2f} B"
+def send_to_discord(webhook: str, png_path: str,
+                    btc_cum_last_b: float, eth_cum_last_b: float,
+                    btc_day_last_b: float, eth_day_last_b: float,
+                    last_date: str):
+    content = (
+        f"**ETF cumulative net inflow (up to {last_date})**\n"
+        f"BTC: {btc_cum_last_b:,.2f} B  (day {btc_day_last_b:+,.3f} B)\n"
+        f"ETH: {eth_cum_last_b:,.2f} B  (day {eth_day_last_b:+,.3f} B)"
+    )
     embed = {
-        "title": TITLE,
+        "title": "Cumulative Net Inflow (US Spot ETFs)",
         "image": {"url": f"attachment://{PNG_NAME}"},
         "footer": {"text": "Source: SoSoValue API"}
     }
-    # ← ここで実際に Discord POST してるはず
-
     payload = {"content": content, "embeds": [embed]}
     with open(png_path, "rb") as f:
         files = {"file": (PNG_NAME, f, "image/png")}
         r = requests.post(webhook, data={"payload_json": json.dumps(payload)}, files=files, timeout=60)
     print(f"[discord] status={r.status_code}", flush=True)
     r.raise_for_status()
+
 
 def main():
     webhook = os.getenv("DISCORD_WEBHOOK")
