@@ -13,7 +13,6 @@ import requests
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from datetime import datetime, timezone, timedelta
 import matplotlib.dates as mdates
 
 TITLE = "Cumulative Net Inflow (US Spot ETFs)"
@@ -60,42 +59,23 @@ def post_json(path, body, max_retries=3):
 
 def _extract_list(payload):
     """
-    payload から履歴の配列を取り出す。想定される形:
-      1) [ {...}, ... ]
-      2) {"data": {"list": [ ... ]}}
-      3) {"data": [ ... ]}               <-- 今ここで落ちた
-      4) {"list": [ ... ]} などのトップレベル
+    payload から履歴の配列を取り出す（形のブレを吸収）
     """
-    # 1) 配列そのもの
     if isinstance(payload, list):
         return payload
-
-    # 2) dict の場合を網羅
     if isinstance(payload, dict):
         data = payload.get("data")
-
-        # 2-a) data が配列
         if isinstance(data, list):
             return data
-
-        # 2-b) data が dict
         if isinstance(data, dict):
-            lst = data.get("list")
-            if isinstance(lst, list):
-                return lst
-            # 他によくあるキー
-            for k in ("records", "items", "rows"):
+            for k in ("list", "records", "items", "rows"):
                 v = data.get(k)
                 if isinstance(v, list):
                     return v
-
-        # 2-c) トップレベルに list 系キーがある
         for k in ("list", "records", "items", "rows"):
             v = payload.get(k)
             if isinstance(v, list):
                 return v
-
-    # どれにも当てはまらなければ空配列
     return []
 
 from datetime import datetime, timezone, timedelta
@@ -128,9 +108,23 @@ def is_confirmed_yday() -> tuple[bool, str, str]:
     last_hist_str = last_hist.strftime("%Y-%m-%d")
     return (last_hist >= yday), yday_str, last_hist_str
 
-
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
+    lst = _extract_list(payload)
+
+    dates, cum_b, daily_b = [], [], []
+    for row in lst:
+        if not isinstance(row, dict):
+            continue
+        d = row.get("date")
+        cum = row.get("cumNetInflow")
+        day = row.get("totalNetInflow")
+        if not d or cum is None or day is None:
+            continue
+        dates.append(datetime.strptime(d, "%Y-%m-%d").date())
+        cum_b.append(float(cum) / 1e9)     # 累積 USD -> $B
+        daily_b.append(float(day) / 1e9)   # 日次 USD -> $B
+    return dates, cum_b, daily_b
 
     def _extract_list(p):
         if isinstance(p, list): return p
