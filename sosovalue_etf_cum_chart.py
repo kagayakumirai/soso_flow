@@ -175,8 +175,9 @@ def send_to_discord(webhook: str, png_path: str,
                     last_date: str):
     content = (
         f"**ETF cumulative net inflow (up to {last_date})**\n"
-        f"BTC: {btc_cum_last_b:,.2f} B  (day {btc_day_last_b:+.3f} B)\n"
-        f"ETH: {eth_cum_last_b:,.2f} B  (day {eth_day_last_b:+.3f} B)"
+        f"BTC: {btc_cum_last_b:,.2f} B  (day {btc_day_last_b:+,.3f} B)\n"
+        f"ETH: {eth_cum_last_b:,.2f} B  (day {eth_day_last_b:+,.3f} B)"
+        + (f"\n{extra_note}" if extra_note else "")
     )
     embed = {
         "title": TITLE,
