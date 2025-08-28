@@ -223,6 +223,15 @@ def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: 
 def main():
     webhook = os.getenv("DISCORD_WEBHOOK")
     assert webhook, "DISCORD_WEBHOOK not set"
+
+    send_eth = os.getenv("SEND_ETH", "1") == "1"
+
+    # === 未確定ならスキップ ===
+    confirmed, yday_str, last_hist_str = is_confirmed_yday(send_eth)
+    if not confirmed:
+        print(f"[info] skip chart: yesterday({yday_str}) is not confirmed yet (latest={last_hist_str})", flush=True)
+        return
+    # ========================
    
     # 取得
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
