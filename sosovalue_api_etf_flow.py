@@ -352,6 +352,15 @@ def main():
     state = load_state()
     embeds = []
 
+    # ===== 確定チェック =====
+    confirmed, last_hist_str = is_confirmed_yday(send_eth, yday)
+    add_api_calls(state, confirm_calls)  # 確認分のコールを計上
+    if not confirmed:
+        log(f"[info] skip: {yday.isoformat()} not confirmed yet (latest={last_hist_str})")
+        save_state(state)
+        return
+    # =======================
+    
     # 事前見積もり（最悪ケースでチェック）
     worst_per_asset = 2 if os.getenv("SOSO_FUNDS_API", "").strip() else 1
     assets = 1 + (1 if send_eth else 0)
@@ -368,14 +377,7 @@ def main():
             pass
         return
 
-    # ===== 確定チェック =====
-    confirmed, last_hist_str = is_confirmed_yday(send_eth, yday)
-    add_api_calls(state, confirm_calls)  # 確認分のコールを計上
-    if not confirmed:
-        log(f"[info] skip: {yday.isoformat()} not confirmed yet (latest={last_hist_str})")
-        save_state(state)
-        return
-    # =======================
+
 
     # BTC
     emb, used, dt = run_one("us-btc-spot", "BTC", yday)
