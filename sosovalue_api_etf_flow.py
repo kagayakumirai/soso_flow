@@ -18,6 +18,51 @@ DEFAULT_BASE = "https://api.sosovalue.xyz"
 FORCE_SEND = os.getenv("FORCE_SEND", "0") == "1"
 
 # === ユーティリティ ===
+from datetime import datetime, timedelta, timezone, date
+
+def _hist_last_date(payload) -> date | None:
+    """historicalInflowChart のレスから最新日付(date)を取り出す"""
+    try:
+        rows = (payload or {}).get("data", {}).get("list") or []
+        # rows は [{date: "YYYY-MM-DD", ...}, ...]
+        if not rows:
+            return None
+        # 末尾が最新とは限らないので max
+        ds = []
+        for r in rows:
+            d = r.get("date")
+            if d:
+                ds.append(datetime.strptime(d, "%Y-%m-%d").date())
+        return max(ds) if ds else None
+    except Exception:
+        return None
+
+def is_confirmed_yday(send_eth: bool, yday: date) -> tuple[bool, str]:
+    """
+    昨日(JST)が履歴に出ていれば True。
+    戻り: (確定？, 最新確定日文字列)
+    """
+    # BTC
+    p_btc = post_json("/openapi/v2/etf/historicalInflowChart", {"type": "us-btc-spot"})
+    last_btc = _hist_last_date(p_btc)
+
+    # ETH（送る設定の時だけ確認）
+    last_eth = None
+    if send_eth:
+        p_eth = post_json("/openapi/v2/etf/historicalInflowChart", {"type": "us-eth-spot"})
+        last_eth = _hist_last_date(p_eth)
+
+    # 最新確定日を決定
+    candidates = [d for d in (last_btc, last_eth) if d is not None]
+    if not candidates:
+        return (False, "N/A")
+    last_hist = max(candidates)
+    return (last_hist >= yday), last_hist.strftime("%Y-%m-%d")
+
+
+
+
+
 def log(*a): print(*a, flush=True)
 
 def jst_yesterday_date():
@@ -300,24 +345,37 @@ def main():
     webhook = os.getenv("DISCORD_WEBHOOK");  assert webhook, "DISCORD_WEBHOOK not set"
     api_key = os.getenv("SOSO_API_KEY");     assert api_key, "SOSO_API_KEY not set"
     send_eth = os.getenv("SEND_ETH", "1") == "1"
-  
+
     yday = jst_yesterday_date()
     log(f"[info] yday(JST) = {yday.isoformat()}")
 
     state = load_state()
     embeds = []
 
-    # 事前見積もり（最悪ケースでチェック：銘柄別APIが設定されていれば各2コール、無ければ各1）
+    # 事前見積もり（最悪ケースでチェック）
     worst_per_asset = 2 if os.getenv("SOSO_FUNDS_API", "").strip() else 1
     assets = 1 + (1 if send_eth else 0)
-    needed = worst_per_asset * assets
+    # 追加: 確定チェックで使う履歴APIの分（BTC + 必要ならETH）
+    confirm_calls = 1 + (1 if send_eth else 0)
+    needed = confirm_calls + worst_per_asset * assets
 
     if not can_use_api(state, needed):
         msg = f"⚠️ SoSoValue API monthly limit would exceed ({state.get('monthly_calls',{}).get(_ym_utc(),0)} + {needed} > {MAX_CALLS_PER_MONTH}). Skipping."
         log("[warn]", msg)
-        try: requests.post(webhook, json={"content": msg}, timeout=15)
-        except Exception: pass
+        try:
+            requests.post(webhook, json={"content": msg}, timeout=15)
+        except Exception:
+            pass
         return
+
+    # ===== 確定チェック =====
+    confirmed, last_hist_str = is_confirmed_yday(send_eth, yday)
+    add_api_calls(state, confirm_calls)  # 確認分のコールを計上
+    if not confirmed:
+        log(f"[info] skip: {yday.isoformat()} not confirmed yet (latest={last_hist_str})")
+        save_state(state)
+        return
+    # =======================
 
     # BTC
     emb, used, dt = run_one("us-btc-spot", "BTC", yday)
@@ -326,7 +384,6 @@ def main():
         embeds.append(emb)
         state["last_btc_day"] = dt
 
-
     # ETH
     if send_eth:
         emb, used, dt = run_one("us-eth-spot", "ETH", yday)
@@ -334,23 +391,12 @@ def main():
         if emb and state.get("last_eth_day") != dt:
             embeds.append(emb)
             state["last_eth_day"] = dt
-            
-   
-    
+
+    # 送信
     if embeds:
         r = requests.post(webhook, json={"embeds": embeds}, timeout=20)
         log(f"[discord] status={r.status_code}")
         r.raise_for_status()
 
-    
     save_state(state)
     log(f"[ok] done. monthly_calls[{_ym_utc()}]={state.get('monthly_calls',{}).get(_ym_utc(),0)}")
-
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        traceback.print_exc()
-        sys.exit(1)
