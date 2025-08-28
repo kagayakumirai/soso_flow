@@ -164,6 +164,22 @@ def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b,
     plt.savefig(out_path, dpi=150)
     plt.close()
 
+from datetime import datetime, timezone, timedelta
+
+def is_confirmed_yday() -> tuple[bool, str, str]:
+    """昨日(JST)が履歴に出たら True。戻り: (確定?, 昨日文字列, 最新確定日文字列)"""
+    now_jst = datetime.now(timezone(timedelta(hours=9)))
+    yday = (now_jst.date() - timedelta(days=1))
+    yday_str = yday.strftime("%Y-%m-%d")
+
+    btc_d, _, _ = fetch_history("us-btc-spot")
+    eth_d, _, _ = fetch_history("us-eth-spot")
+    last_hist = max(btc_d[-1], eth_d[-1]) if (btc_d and eth_d) else (btc_d[-1] if btc_d else eth_d[-1])
+    last_hist_str = last_hist.strftime("%Y-%m-%d")
+
+    return (last_hist >= yday), yday_str, last_hist_str
+
+
 
 def send_to_discord(webhook: str, png_path: str, btc_last_b: float, eth_last_b: float, last_date: str):
     content = f"**ETF cumulative net inflow (up to {last_date})**\n" \
