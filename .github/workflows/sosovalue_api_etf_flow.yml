@@ -36,6 +36,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests matplotlib
 
+
       # 昨日(JST)の確定チェック（BTC+必要ならETH）
       - name: Check SoSoValue confirmation (yesterday JST)
         id: confirm
@@ -45,47 +46,75 @@ jobs:
         run: |
           python - <<'PY'
           import os, requests, datetime as dt
-
+      
           API = 'https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart'
           headers = {
               'x-soso-api-key': os.environ['SOSO_API_KEY'],
-              'Content-Type': 'application/json'
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'User-Agent': 'etf-flow-confirm/1.0'
           }
-
+      
+          def extract_rows(payload):
+              """payload から履歴配列を安全に取り出す（data が dict/list どちらでもOK）"""
+              if isinstance(payload, list):
+                  return payload
+              if isinstance(payload, dict):
+                  data = payload.get('data')
+                  # data が list
+                  if isinstance(data, list):
+                      return data
+                  # data が dict
+                  if isinstance(data, dict):
+                      for k in ('list','records','items','rows'):
+                          v = data.get(k)
+                          if isinstance(v, list):
+                              return v
+                  # トップレベルに list 系キー
+                  for k in ('list','records','items','rows'):
+                      v = payload.get(k)
+                      if isinstance(v, list):
+                          return v
+              return []
+      
           def last_hist_date(kind: str):
               r = requests.post(API, headers=headers, json={'type': kind}, timeout=30)
               r.raise_for_status()
-              rows = (r.json() or {}).get('data', {}).get('list') or []
-              if not rows:
-                  return None
+              rows = extract_rows(r.json() or {})
               dates = []
               for it in rows:
                   d = it.get('date')
-                  if d:
+                  if not d:
+                      continue
+                  try:
                       dates.append(dt.datetime.strptime(d, '%Y-%m-%d').date())
+                  except Exception:
+                      pass
               return max(dates) if dates else None
-
+      
           jst = dt.timezone(dt.timedelta(hours=9))
           yday = (dt.datetime.now(jst).date() - dt.timedelta(days=1))
-
+      
           latests = []
           ld_btc = last_hist_date('us-btc-spot')
           if ld_btc: latests.append(ld_btc)
-
+      
           if os.getenv('SEND_ETH', '1') == '1':
               ld_eth = last_hist_date('us-eth-spot')
               if ld_eth: latests.append(ld_eth)
-
+      
           latest = max(latests) if latests else None
           confirmed = (latest is not None) and (latest >= yday)
-
-          print(f"yday={yday}, latest={latest}, confirmed={confirmed}")
-
+      
+          print(f"[confirm] yday={yday}, latest={latest}, confirmed={confirmed}")
+      
+          # 後続ステップに渡す
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"confirmed={'true' if confirmed else 'false'}\n")
               f.write(f"latest={latest}\n")
               f.write(f"yday={yday}\n")
           PY
+
 
 
       - name: Run SoSoValue API Sentry
