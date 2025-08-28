@@ -335,22 +335,7 @@ def main():
             embeds.append(emb)
             state["last_eth_day"] = dt
             
-
-    confirmed, yday_str, last_hist_str = is_confirmed_yday()
-    if not confirmed:
-        print(f"[info] skip: {yday_str} not confirmed yet (latest={last_hist_str})")
-        return  # ← 何も送らず終了
-    
-    # ここから先は「確定」だけ流す
-    btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
-    eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
-    
-    make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
-    last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
-    send_to_discord(DISCORD_WEBHOOK, PNG_NAME, btc_cum[-1], eth_cum[-1], last_date)
-    print("[ok] confirmed report sent")
-
-    
+   
     
     if embeds:
         r = requests.post(webhook, json={"embeds": embeds}, timeout=20)
