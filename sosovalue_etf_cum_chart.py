@@ -126,19 +126,26 @@ def fetch_history(kind: str):
         daily_b.append(float(day) / 1e9)   # 日次 USD -> $B
     return dates, cum_b, daily_b
 
-    def _extract_list(p):
-        if isinstance(p, list): return p
-        if isinstance(p, dict):
-            data = p.get("data")
-            if isinstance(data, list): return data
-            if isinstance(data, dict):
-                for k in ("list", "records", "items", "rows"):
-                    v = data.get(k)
-                    if isinstance(v, list): return v
-            for k in ("list", "records", "items", "rows"):
-                v = p.get(k)
-                if isinstance(v, list): return v
-        return []
+def fetch_history(kind: str):
+    payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
+
+    # ここはグローバルの _extract_list をそのまま使う
+    lst = _extract_list(payload)
+
+    dates, cum_b, daily_b = [], [], []
+    for row in lst:
+        if not isinstance(row, dict):
+            continue
+        d   = row.get("date")
+        cum = row.get("cumNetInflow")
+        day = row.get("totalNetInflow")
+        if not d or cum is None or day is None:
+            continue
+        dates.append(datetime.strptime(d, "%Y-%m-%d").date())
+        cum_b.append(float(cum) / 1e9)
+        daily_b.append(float(day) / 1e9)
+    return dates, cum_b, daily_b
+
 
     lst = _extract_list(payload)
 
