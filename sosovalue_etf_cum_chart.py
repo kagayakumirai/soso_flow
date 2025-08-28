@@ -194,6 +194,66 @@ def send_to_discord(webhook: str, png_path: str,
         )
     print(f"[discord] status={r.status_code}", flush=True)
     r.raise_for_status()
+# ① ユーティリティ: アセットごとの最新確定日（<= yday）を返す
+def last_hist_date(kind: str):
+    payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
+    lst = _extract_list(payload)
+    ds = []
+    for it in lst:
+        d = it.get("date")
+        if d:
+            ds.append(datetime.strptime(d, "%Y-%m-%d").date())
+    return max(ds) if ds else None
+
+def jst_yesterday():
+    return (datetime.now(timezone(timedelta(hours=9))).date() - timedelta(days=1))
+
+# ② main の冒頭で BTC/ETH それぞれ確認
+yday = jst_yesterday()
+last_btc = last_hist_date("us-btc-spot")
+last_eth = last_hist_date("us-eth-spot") if os.getenv("SEND_ETH","1")=="1" else None
+
+btc_confirmed = (last_btc is not None and last_btc >= yday)
+eth_confirmed = (last_eth is not None and last_eth >= yday)
+
+# 完全に未確定ならスキップ（両方とも yday 未達）
+if not (btc_confirmed or eth_confirmed):
+    print(f"[info] skip: neither BTC nor ETH confirmed for yday={yday} "
+          f"(latest_btc={last_btc}, latest_eth={last_eth})")
+    return
+
+# ③ 履歴取得
+btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
+eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
+
+# ④ 確定日の行をピンポイントに拾う（見つからなければ末尾にフォールバック）
+def pick_at(dates, series, target):
+    idx = next((i for i, d in enumerate(dates) if d == target), None)
+    return (series[idx] if idx is not None else (series[-1] if series else None))
+
+target_btc = last_btc if last_btc and last_btc <= yday else (btc_d[-1] if btc_d else None)
+target_eth = last_eth if last_eth and last_eth <= yday else (eth_d[-1] if eth_d else None)
+
+btc_cum_last_b = float(pick_at(btc_d, btc_cum, target_btc) or 0.0)
+btc_day_last_b = float(pick_at(btc_d, btc_day, target_btc) or 0.0)
+eth_cum_last_b = float(pick_at(eth_d, eth_cum, target_eth) or 0.0)
+eth_day_last_b = float(pick_at(eth_d, eth_day, target_eth) or 0.0)
+
+# ⑤ 送信テキスト：それぞれの“実際の確定日”を明示。未確定は (stale) を付与
+btc_tag = "" if (target_btc and target_btc == yday) else " (stale)"
+eth_tag = "" if (target_eth and target_eth == yday) else " (stale)"
+
+last_date_for_title = max(d for d in [target_btc, target_eth] if d).strftime("%Y-%m-%d")
+
+send_to_discord(
+    webhook, PNG_NAME,
+    btc_cum_last_b, eth_cum_last_b,
+    btc_day_last_b, eth_day_last_b,
+    last_date_for_title,
+    extra_note=f"BTC@{target_btc}{btc_tag}, ETH@{target_eth}{eth_tag}"
+)
+
+
 
 # ------------------ main ------------------
 def main():
