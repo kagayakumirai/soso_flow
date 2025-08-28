@@ -195,6 +195,8 @@ def send_to_discord(webhook: str, png_path: str,
         )
     print(f"[discord] status={r.status_code}", flush=True)
     r.raise_for_status()
+
+
 # ① ユーティリティ: アセットごとの最新確定日（<= yday）を返す
 def last_hist_date(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
@@ -209,19 +211,19 @@ def last_hist_date(kind: str):
 def jst_yesterday():
     return (datetime.now(timezone(timedelta(hours=9))).date() - timedelta(days=1))
 
-# ② main の冒頭で BTC/ETH それぞれ確認
-yday = jst_yesterday()
-last_btc = last_hist_date("us-btc-spot")
-last_eth = last_hist_date("us-eth-spot") if os.getenv("SEND_ETH","1")=="1" else None
-
-btc_confirmed = (last_btc is not None and last_btc >= yday)
-eth_confirmed = (last_eth is not None and last_eth >= yday)
-
-# 完全に未確定ならスキップ（両方とも yday 未達）
-if not (btc_confirmed or eth_confirmed):
-    print(f"[info] skip: neither BTC nor ETH confirmed for yday={yday} "
-          f"(latest_btc={last_btc}, latest_eth={last_eth})")
-    return
+    # ② main の冒頭で BTC/ETH それぞれ確認
+    yday = jst_yesterday()
+    last_btc = last_hist_date("us-btc-spot")
+    last_eth = last_hist_date("us-eth-spot") if os.getenv("SEND_ETH","1")=="1" else None
+    
+    btc_confirmed = (last_btc is not None and last_btc >= yday)
+    eth_confirmed = (last_eth is not None and last_eth >= yday)
+    
+    # 完全に未確定ならスキップ（両方とも yday 未達）
+    if not (btc_confirmed or eth_confirmed):
+        print(f"[info] skip: neither BTC nor ETH confirmed for yday={yday} "
+              f"(latest_btc={last_btc}, latest_eth={last_eth})")
+        return
 
 # ③ 履歴取得
 btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
