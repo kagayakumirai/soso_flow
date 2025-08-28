@@ -98,21 +98,36 @@ def _extract_list(payload):
     # どれにも当てはまらなければ空配列
     return []
 
-
 from datetime import datetime, timezone, timedelta
 
 def is_confirmed_yday() -> tuple[bool, str, str]:
-    """昨日(JST)が履歴に出たら True。戻り: (確定?, 昨日文字列, 最新確定日文字列)"""
+    """
+    昨日(JST)が履歴に出現していれば True を返す。
+    戻り値: (confirmed?, yesterday_str, last_hist_str)
+    """
     now_jst = datetime.now(timezone(timedelta(hours=9)))
     yday = (now_jst.date() - timedelta(days=1))
     yday_str = yday.strftime("%Y-%m-%d")
 
+    # 履歴（確定値）を取得
     btc_d, _, _ = fetch_history("us-btc-spot")
     eth_d, _, _ = fetch_history("us-eth-spot")
-    last_hist = max(btc_d[-1], eth_d[-1]) if (btc_d and eth_d) else (btc_d[-1] if btc_d else eth_d[-1])
-    last_hist_str = last_hist.strftime("%Y-%m-%d")
 
+    # 最新の確定日
+    last_hist = None
+    if btc_d and eth_d:
+        last_hist = max(btc_d["date"].iloc[-1], eth_d["date"].iloc[-1])
+    elif btc_d is not None:
+        last_hist = btc_d["date"].iloc[-1]
+    elif eth_d is not None:
+        last_hist = eth_d["date"].iloc[-1]
+
+    if last_hist is None:
+        return (False, yday_str, "N/A")
+
+    last_hist_str = last_hist.strftime("%Y-%m-%d")
     return (last_hist >= yday), yday_str, last_hist_str
+
 
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
