@@ -80,33 +80,37 @@ def _extract_list(payload):
 
 from datetime import datetime, timezone, timedelta
 
-def is_confirmed_yday() -> tuple[bool, str, str]:
+def _last_hist_date(kind: str):
+    """historicalInflowChart からその種別の最新確定日(date)を返す"""
+    payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
+    lst = _extract_list(payload)
+    dates = []
+    for it in lst:
+        d = it.get("date")
+        if d:
+            dates.append(datetime.strptime(d, "%Y-%m-%d").date())
+    return max(dates) if dates else None
+
+def is_confirmed_yday(send_eth: bool = True) -> tuple[bool, str, str]:
     """
-    昨日(JST)が履歴に出現していれば True を返す。
-    戻り値: (confirmed?, yesterday_str, last_hist_str)
+    前日(JST)が確定していれば True。
+    戻り値: (confirmed?, yday_str, last_hist_str)
     """
     now_jst = datetime.now(timezone(timedelta(hours=9)))
     yday = (now_jst.date() - timedelta(days=1))
     yday_str = yday.strftime("%Y-%m-%d")
 
-    # 履歴（確定値）を取得
-    btc_d, _, _ = fetch_history("us-btc-spot")
-    eth_d, _, _ = fetch_history("us-eth-spot")
+    # BTC は必須、ETH は SEND_ETH=1 のときだけ見る
+    ld_btc = _last_hist_date("us-btc-spot")
+    ld_eth = _last_hist_date("us-eth-spot") if send_eth else None
 
-    # 最新の確定日
-    last_hist = None
-    if btc_d and eth_d:
-        last_hist = max(btc_d["date"].iloc[-1], eth_d["date"].iloc[-1])
-    elif btc_d is not None:
-        last_hist = btc_d["date"].iloc[-1]
-    elif eth_d is not None:
-        last_hist = eth_d["date"].iloc[-1]
+    candidates = [d for d in (ld_btc, ld_eth) if d]
+    if not candidates:
+        return False, yday_str, "N/A"
 
-    if last_hist is None:
-        return (False, yday_str, "N/A")
+    latest = max(candidates)
+    return (latest >= yday), yday_str, latest.strftime("%Y-%m-%d")
 
-    last_hist_str = last_hist.strftime("%Y-%m-%d")
-    return (last_hist >= yday), yday_str, last_hist_str
 
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
