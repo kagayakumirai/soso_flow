@@ -37,27 +37,41 @@ def _hist_last_date(payload) -> date | None:
     except Exception:
         return None
 
-def is_confirmed_yday(send_eth: bool, yday: date) -> tuple[bool, str]:
+# === ユーティリティ ===
+from datetime import datetime, timedelta, timezone, date
+
+def _hist_last_date(payload) -> date | None:
+    ...
+    # （この関数はそのままでOK）
+
+def is_confirmed_yday(send_eth: bool, yday: date, api_key: str) -> tuple[bool, str, int]:
     """
     昨日(JST)が履歴に出ていれば True。
-    戻り: (確定？, 最新確定日文字列)
+    戻り: (確定？, 最新確定日文字列, 使ったAPIコール数)
     """
+    base = os.getenv("SOSO_BASE", DEFAULT_BASE)
+    url  = f"{base}/openapi/v2/etf/historicalInflowChart"
+    used = 0
+
     # BTC
-    p_btc = post_json("/openapi/v2/etf/historicalInflowChart", {"type": "us-btc-spot"})
+    p_btc = post_json(url, {"type": "us-btc-spot"}, api_key)
+    used += 1
     last_btc = _hist_last_date(p_btc)
 
     # ETH（送る設定の時だけ確認）
     last_eth = None
     if send_eth:
-        p_eth = post_json("/openapi/v2/etf/historicalInflowChart", {"type": "us-eth-spot"})
+        p_eth = post_json(url, {"type": "us-eth-spot"}, api_key)
+        used += 1
         last_eth = _hist_last_date(p_eth)
 
     # 最新確定日を決定
     candidates = [d for d in (last_btc, last_eth) if d is not None]
     if not candidates:
-        return (False, "N/A")
+        return (False, "N/A", used)
     last_hist = max(candidates)
-    return (last_hist >= yday), last_hist.strftime("%Y-%m-%d")
+    return (last_hist >= yday), last_hist.strftime("%Y-%m-%d"), used
+
 
 
 
@@ -339,7 +353,6 @@ def run_one(kind: str, tag: str, yday):
         return build_embed(title, flows), used_calls, dedup_date
     return None, used_calls, None
 
-# === メイン ===
 def main():
     log("[boot] SoSoValue ETF Flow Sentry (limits-aware)")
     webhook = os.getenv("DISCORD_WEBHOOK");  assert webhook, "DISCORD_WEBHOOK not set"
@@ -352,20 +365,10 @@ def main():
     state = load_state()
     embeds = []
 
-    # ===== 確定チェック =====
-    confirmed, last_hist_str = is_confirmed_yday(send_eth, yday)
-    add_api_calls(state, confirm_calls)  # 確認分のコールを計上
-    if not confirmed:
-        log(f"[info] skip: {yday.isoformat()} not confirmed yet (latest={last_hist_str})")
-        save_state(state)
-        return
-    # =======================
-    
     # 事前見積もり（最悪ケースでチェック）
     worst_per_asset = 2 if os.getenv("SOSO_FUNDS_API", "").strip() else 1
     assets = 1 + (1 if send_eth else 0)
-    # 追加: 確定チェックで使う履歴APIの分（BTC + 必要ならETH）
-    confirm_calls = 1 + (1 if send_eth else 0)
+    confirm_calls = 1 + (1 if send_eth else 0)   # 履歴API分（BTC+必要ならETH）
     needed = confirm_calls + worst_per_asset * assets
 
     if not can_use_api(state, needed):
@@ -377,7 +380,14 @@ def main():
             pass
         return
 
-
+    # ===== 確定チェック =====
+    confirmed, last_hist_str, used_by_confirm = is_confirmed_yday(send_eth, yday, api_key)
+    add_api_calls(state, used_by_confirm)  # 確認分のコールを計上
+    if not confirmed and not FORCE_SEND:
+        log(f"[info] skip: {yday.isoformat()} not confirmed yet (latest={last_hist_str})")
+        save_state(state)
+        return
+    # =======================
 
     # BTC
     emb, used, dt = run_one("us-btc-spot", "BTC", yday)
