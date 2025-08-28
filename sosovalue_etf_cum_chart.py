@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 """
 SoSoValue ETF Cumulative Flow Chart (BTC+ETH)
 - /openapi/v2/etf/historicalInflowChart から BTC/ETH の
@@ -63,9 +64,7 @@ def post_json(path, body, max_retries=3):
 
 # ------------------ payload helpers ------------------
 def _extract_list(payload):
-    """
-    payload から履歴の配列を取り出す（形のブレを吸収）
-    """
+    """payload から履歴の配列を取り出す（形のブレを吸収）"""
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
@@ -87,31 +86,12 @@ def _last_hist_date(kind: str):
     """historicalInflowChart から種別の最新確定日(date)を返す"""
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
     lst = _extract_list(payload)
-    dates = []
+    ds = []
     for it in lst:
         d = it.get("date")
         if d:
-            dates.append(datetime.strptime(d, "%Y-%m-%d").date())
-    return max(dates) if dates else None
-
-def is_confirmed_yday(send_eth: bool = True):
-    """
-    前日(JST)が確定していれば True。
-    戻り値: (confirmed?, yday_str, last_hist_str)
-    """
-    now_jst = datetime.now(timezone(timedelta(hours=9)))
-    yday = (now_jst.date() - timedelta(days=1))
-    yday_str = yday.strftime("%Y-%m-%d")
-
-    ld_btc = _last_hist_date("us-btc-spot")
-    ld_eth = _last_hist_date("us-eth-spot") if send_eth else None
-
-    candidates = [d for d in (ld_btc, ld_eth) if d]
-    if not candidates:
-        return False, yday_str, "N/A"
-
-    latest = max(candidates)
-    return (latest >= yday), yday_str, latest.strftime("%Y-%m-%d")
+            ds.append(datetime.strptime(d, "%Y-%m-%d").date())
+    return max(ds) if ds else None
 
 def fetch_history(kind: str):
     payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
@@ -130,13 +110,15 @@ def fetch_history(kind: str):
         cum_b.append(float(cum) / 1e9)     # USD → $B
         daily_b.append(float(day) / 1e9)   # USD/day → $B/day
 
-    # ←← ここを追加：日付でソートしてから返す
+    # 日付で確実にソート
     if dates:
         packed = sorted(zip(dates, cum_b, daily_b), key=lambda x: x[0])
         dates, cum_b, daily_b = map(list, zip(*packed))
 
     return dates, cum_b, daily_b
 
+def jst_yesterday():
+    return (datetime.now(timezone(timedelta(hours=9))).date() - timedelta(days=1))
 
 # ------------------ drawing ------------------
 def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b, out_path):
@@ -169,10 +151,16 @@ def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b,
     plt.close()
 
 # ------------------ Discord ------------------
-def send_to_discord(webhook: str, png_path: str,
-                    btc_cum_last_b: float, eth_cum_last_b: float,
-                    btc_day_last_b: float, eth_day_last_b: float,
-                    last_date: str):
+def send_to_discord(
+    webhook: str,
+    png_path: str,
+    btc_cum_last_b: float,
+    eth_cum_last_b: float,
+    btc_day_last_b: float,
+    eth_day_last_b: float,
+    last_date: str,
+    extra_note: str = "",
+):
     content = (
         f"**ETF cumulative net inflow (up to {last_date})**\n"
         f"BTC: {btc_cum_last_b:,.2f} B  (day {btc_day_last_b:+,.3f} B)\n"
@@ -196,68 +184,6 @@ def send_to_discord(webhook: str, png_path: str,
     print(f"[discord] status={r.status_code}", flush=True)
     r.raise_for_status()
 
-
-# ① ユーティリティ: アセットごとの最新確定日（<= yday）を返す
-def last_hist_date(kind: str):
-    payload = post_json("/openapi/v2/etf/historicalInflowChart", {"type": kind})
-    lst = _extract_list(payload)
-    ds = []
-    for it in lst:
-        d = it.get("date")
-        if d:
-            ds.append(datetime.strptime(d, "%Y-%m-%d").date())
-    return max(ds) if ds else None
-
-def jst_yesterday():
-    return (datetime.now(timezone(timedelta(hours=9))).date() - timedelta(days=1))
-
-    # ② main の冒頭で BTC/ETH それぞれ確認
-    yday = jst_yesterday()
-    last_btc = last_hist_date("us-btc-spot")
-    last_eth = last_hist_date("us-eth-spot") if os.getenv("SEND_ETH","1")=="1" else None
-    
-    btc_confirmed = (last_btc is not None and last_btc >= yday)
-    eth_confirmed = (last_eth is not None and last_eth >= yday)
-    
-    # 完全に未確定ならスキップ（両方とも yday 未達）
-    if not (btc_confirmed or eth_confirmed):
-        print(f"[info] skip: neither BTC nor ETH confirmed for yday={yday} "
-              f"(latest_btc={last_btc}, latest_eth={last_eth})")
-        return
-
-# ③ 履歴取得
-btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
-eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
-
-# ④ 確定日の行をピンポイントに拾う（見つからなければ末尾にフォールバック）
-def pick_at(dates, series, target):
-    idx = next((i for i, d in enumerate(dates) if d == target), None)
-    return (series[idx] if idx is not None else (series[-1] if series else None))
-
-target_btc = last_btc if last_btc and last_btc <= yday else (btc_d[-1] if btc_d else None)
-target_eth = last_eth if last_eth and last_eth <= yday else (eth_d[-1] if eth_d else None)
-
-btc_cum_last_b = float(pick_at(btc_d, btc_cum, target_btc) or 0.0)
-btc_day_last_b = float(pick_at(btc_d, btc_day, target_btc) or 0.0)
-eth_cum_last_b = float(pick_at(eth_d, eth_cum, target_eth) or 0.0)
-eth_day_last_b = float(pick_at(eth_d, eth_day, target_eth) or 0.0)
-
-# ⑤ 送信テキスト：それぞれの“実際の確定日”を明示。未確定は (stale) を付与
-btc_tag = "" if (target_btc and target_btc == yday) else " (stale)"
-eth_tag = "" if (target_eth and target_eth == yday) else " (stale)"
-
-last_date_for_title = max(d for d in [target_btc, target_eth] if d).strftime("%Y-%m-%d")
-
-send_to_discord(
-    webhook, PNG_NAME,
-    btc_cum_last_b, eth_cum_last_b,
-    btc_day_last_b, eth_day_last_b,
-    last_date_for_title,
-    extra_note=f"BTC@{target_btc}{btc_tag}, ETH@{target_eth}{eth_tag}"
-)
-
-
-
 # ------------------ main ------------------
 def main():
     webhook = os.getenv("DISCORD_WEBHOOK")
@@ -266,46 +192,64 @@ def main():
     send_eth = os.getenv("SEND_ETH", "1") == "1"
     yday = jst_yesterday()
 
-    # --- 確定チェック用に最新日を取得 ---
+    # 最新確定日を取得（確認用）
     last_btc = _last_hist_date("us-btc-spot")
     last_eth = _last_hist_date("us-eth-spot") if send_eth else None
 
     btc_confirmed = (last_btc is not None and last_btc >= yday)
     eth_confirmed = (last_eth is not None and last_eth >= yday)
 
-    # --- 未確定ならスキップ ---
     if not (btc_confirmed or eth_confirmed):
         print(f"[info] skip chart: neither BTC nor ETH confirmed for yday={yday} "
               f"(latest_btc={last_btc}, latest_eth={last_eth})")
         return
-    # ---------------------------------
 
-    # データ取得
+    # 履歴データ
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
     eth_d, eth_cum, eth_day = fetch_history("us-eth-spot") if send_eth else ([], [], [])
 
-    # 描画
+    # グラフはフルで描画
     make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
 
-    # 最新日付
-    last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d") if btc_d and eth_d else btc_d[-1].strftime("%Y-%m-%d")
+    # ---- ここで「本文に出す値」の基準日を決める（target_*）----
+    def pick_at(dates, series, target):
+        if not series:
+            return None
+        if target is None:
+            return series[-1]
+        for i, d in enumerate(dates):
+            if d == target:
+                return series[i]
+        return series[-1]
 
-    # 本文に出す数値
-    btc_cum_last_b = float(btc_cum[-1])
-    btc_day_last_b = float(btc_day[-1])
-    eth_cum_last_b = float(eth_cum[-1]) if eth_cum else 0.0
-    eth_day_last_b = float(eth_day[-1]) if eth_day else 0.0
+    target_btc = last_btc if (last_btc and (not btc_d or last_btc <= btc_d[-1])) else (btc_d[-1] if btc_d else None)
+    target_eth = last_eth if (last_eth and (not eth_d or last_eth <= eth_d[-1])) else (eth_d[-1] if eth_d else None)
+
+    btc_cum_last_b = float(pick_at(btc_d, btc_cum, target_btc) or 0.0)
+    btc_day_last_b = float(pick_at(btc_d, btc_day, target_btc) or 0.0)
+    eth_cum_last_b = float(pick_at(eth_d, eth_cum, target_eth) or 0.0)
+    eth_day_last_b = float(pick_at(eth_d, eth_day, target_eth) or 0.0)
+
+    btc_tag = "" if (target_btc and target_btc == yday) else " (stale)"
+    eth_tag = "" if (target_eth and target_eth == yday) else " (stale)"
+    extra_note = ""
+    if send_eth:
+        extra_note = f"BTC@{target_btc}{btc_tag}, ETH@{target_eth}{eth_tag}"
+    else:
+        extra_note = f"BTC@{target_btc}{btc_tag}"
+
+    last_date_for_title = max(d for d in [target_btc, target_eth] if d).strftime("%Y-%m-%d")
 
     # Discord送信
     send_to_discord(
         webhook, PNG_NAME,
         btc_cum_last_b, eth_cum_last_b,
         btc_day_last_b, eth_day_last_b,
-        last_date
+        last_date_for_title,
+        extra_note=extra_note
     )
 
     print("[ok] chart sent")
-
 
 if __name__ == "__main__":
     main()
