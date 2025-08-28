@@ -238,18 +238,29 @@ def main():
         return
     # ========================
    
-    # 取得
+    # 取得（履歴API）
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
     eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
-    
+
     # 描画
     make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
 
-    # 最終日付（listから直接取り出す）
+    # 最新確定日（履歴の末尾日付）
     last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
-    
-    # 送信（dates は list、cum は $B単位の list[float]）
-    send_to_discord(webhook, PNG_NAME, btc_cum[-1], eth_cum[-1], last_date)
+
+    # 本文に使う数値（累計は $B、日次も $B/day）
+    btc_cum_last_b = float(btc_cum[-1])
+    eth_cum_last_b = float(eth_cum[-1])
+    btc_day_last_b = float(btc_day[-1])
+    eth_day_last_b = float(eth_day[-1])
+
+    # 送信
+    send_to_discord(
+        webhook, PNG_NAME,
+        btc_cum_last_b, eth_cum_last_b,
+        btc_day_last_b, eth_day_last_b,
+        last_date
+    )
     
     print("[ok] chart sent")
 
