@@ -43,48 +43,48 @@ jobs:
           SOSO_API_KEY: ${{ secrets.SOSO_API_KEY }}
           SEND_ETH: "1"   # ETHも見たい時は "1"
         run: |
-          python - <<'PY'
-            import os, requests, datetime as dt
+            python - <<'PY'
+                import os, requests, datetime as dt
 
-            API = 'https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart'
-            headers = {
-                'x-soso-api-key': os.environ['SOSO_API_KEY'],
-                'Content-Type': 'application/json'
-            }
+                API = 'https://api.sosovalue.xyz/openapi/v2/etf/historicalInflowChart'
+                headers = {
+                    'x-soso-api-key': os.environ['SOSO_API_KEY'],
+                    'Content-Type': 'application/json'
+                }
+    
+                def last_hist_date(kind: str):
+                    r = requests.post(API, headers=headers, json={'type': kind}, timeout=30)
+                    r.raise_for_status()
+                    rows = (r.json() or {}).get('data', {}).get('list') or []
+                    if not rows:
+                        return None
+                    dates = []
+                    for it in rows:
+                        d = it.get('date')
+                        if d:
+                            dates.append(dt.datetime.strptime(d, '%Y-%m-%d').date())
+                    return max(dates) if dates else None
+    
+                jst = dt.timezone(dt.timedelta(hours=9))
+                yday = (dt.datetime.now(jst).date() - dt.timedelta(days=1))
 
-            def last_hist_date(kind: str):
-                r = requests.post(API, headers=headers, json={'type': kind}, timeout=30)
-                r.raise_for_status()
-                rows = (r.json() or {}).get('data', {}).get('list') or []
-                if not rows:
-                    return None
-                dates = []
-                for it in rows:
-                    d = it.get('date')
-                    if d:
-                        dates.append(dt.datetime.strptime(d, '%Y-%m-%d').date())
-                return max(dates) if dates else None
-
-            jst = dt.timezone(dt.timedelta(hours=9))
-            yday = (dt.datetime.now(jst).date() - dt.timedelta(days=1))
-
-            latests = []
-            ld_btc = last_hist_date('us-btc-spot')
-            if ld_btc: latests.append(ld_btc)
-
-            if os.getenv('SEND_ETH', '1') == '1':
-                ld_eth = last_hist_date('us-eth-spot')
-                if ld_eth: latests.append(ld_eth)
-
-            latest = max(latests) if latests else None
-            confirmed = (latest is not None) and (latest >= yday)
-
-            print(f"yday={yday}, latest={latest}, confirmed={confirmed}")
-
-            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-                f.write(f"confirmed={'true' if confirmed else 'false'}\n")
-                f.write(f"latest={latest}\n")
-                f.write(f"yday={yday}\n")
+                latests = []
+                ld_btc = last_hist_date('us-btc-spot')
+                if ld_btc: latests.append(ld_btc)
+    
+                if os.getenv('SEND_ETH', '1') == '1':
+                    ld_eth = last_hist_date('us-eth-spot')
+                    if ld_eth: latests.append(ld_eth)
+    
+                latest = max(latests) if latests else None
+                confirmed = (latest is not None) and (latest >= yday)
+    
+                print(f"yday={yday}, latest={latest}, confirmed={confirmed}")
+    
+                with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                    f.write(f"confirmed={'true' if confirmed else 'false'}\n")
+                    f.write(f"latest={latest}\n")
+                    f.write(f"yday={yday}\n")
             PY
 
       - name: Run SoSoValue API Sentry
