@@ -264,35 +264,48 @@ def main():
     assert webhook, "DISCORD_WEBHOOK not set"
 
     send_eth = os.getenv("SEND_ETH", "1") == "1"
+    yday = jst_yesterday()
 
-    # 未確定ならスキップ
-    confirmed, yday_str, last_hist_str = is_confirmed_yday(send_eth)
-    if not confirmed:
-        print(f"[info] skip chart: yesterday({yday_str}) is not confirmed yet (latest={last_hist_str})", flush=True)
+    # --- 確定チェック用に最新日を取得 ---
+    last_btc = _last_hist_date("us-btc-spot")
+    last_eth = _last_hist_date("us-eth-spot") if send_eth else None
+
+    btc_confirmed = (last_btc is not None and last_btc >= yday)
+    eth_confirmed = (last_eth is not None and last_eth >= yday)
+
+    # --- 未確定ならスキップ ---
+    if not (btc_confirmed or eth_confirmed):
+        print(f"[info] skip chart: neither BTC nor ETH confirmed for yday={yday} "
+              f"(latest_btc={last_btc}, latest_eth={last_eth})")
         return
+    # ---------------------------------
 
-    # 取得
+    # データ取得
     btc_d, btc_cum, btc_day = fetch_history("us-btc-spot")
-    eth_d, eth_cum, eth_day = fetch_history("us-eth-spot")
+    eth_d, eth_cum, eth_day = fetch_history("us-eth-spot") if send_eth else ([], [], [])
 
     # 描画
     make_chart(btc_d, btc_cum, btc_day, eth_d, eth_cum, eth_day, PNG_NAME)
 
-    # 本文に使う最新値（確定分の末尾）
-    last_date      = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d")
-    btc_cum_last_b = float(btc_cum[-1])
-    eth_cum_last_b = float(eth_cum[-1])
-    btc_day_last_b = float(btc_day[-1])
-    eth_day_last_b = float(eth_day[-1])
+    # 最新日付
+    last_date = max(btc_d[-1], eth_d[-1]).strftime("%Y-%m-%d") if btc_d and eth_d else btc_d[-1].strftime("%Y-%m-%d")
 
-    # 送信
+    # 本文に出す数値
+    btc_cum_last_b = float(btc_cum[-1])
+    btc_day_last_b = float(btc_day[-1])
+    eth_cum_last_b = float(eth_cum[-1]) if eth_cum else 0.0
+    eth_day_last_b = float(eth_day[-1]) if eth_day else 0.0
+
+    # Discord送信
     send_to_discord(
         webhook, PNG_NAME,
         btc_cum_last_b, eth_cum_last_b,
         btc_day_last_b, eth_day_last_b,
         last_date
     )
+
     print("[ok] chart sent")
+
 
 if __name__ == "__main__":
     main()
