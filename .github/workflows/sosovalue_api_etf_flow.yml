@@ -78,7 +78,7 @@ jobs:
                 f.write(f"confirmed={'true' if confirmed else 'false'}\n")
                 f.write(f"latest={latest}\n")
                 f.write(f"yday={yday}\n")
-          PY
+            PY
 
       - name: Run SoSoValue API Sentry
         if: steps.confirm.outputs.confirmed == 'true'
