@@ -1,0 +1,5 @@
+- name: Test inline python
+  run: |
+    python - <<'PY'
+    print("hello from inline python")
+    PY
