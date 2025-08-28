@@ -15,6 +15,13 @@ jobs:
         with:
           python-version: "3.11"
 
+      # ← この下に追加できる！
+      - name: Test inline python
+        run: |
+          python - <<'PY'
+          print("hello from inline python")
+          PY
+
       - name: Restore send state
         id: cache-restore
         uses: actions/cache/restore@v4
