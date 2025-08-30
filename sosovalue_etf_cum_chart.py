@@ -122,33 +122,53 @@ def jst_yesterday():
 
 # ------------------ drawing ------------------
 def make_chart(btc_dates, btc_cum_b, btc_day_b, eth_dates, eth_cum_b, eth_day_b, out_path):
-    plt.figure(figsize=(11, 6.2))
+    fig, (ax_btc, ax_eth) = plt.subplots(
+        2, 1, figsize=(11, 6.5), sharex=True,
+        gridspec_kw={"height_ratios": [1, 1], "hspace": 0.15}
+    )
 
-    # 累積（左軸）
-    ax = plt.gca()
-    ax.plot(btc_dates, btc_cum_b, label="BTC ETFs (cum $B)")
-    ax.plot(eth_dates, eth_cum_b, label="ETH ETFs (cum $B)")
-    ax.set_ylabel("Cumulative Net Inflow ($B)")
-    ax.grid(True, alpha=0.3)
+    # ===== BTC (上段) =====
+    ax_btc.plot(btc_dates, btc_cum_b, label="BTC ETFs (cum $B)")
+    ax_btc.set_ylabel("Cumulative ($B)")
+    ax_btc.grid(True, alpha=0.3)
 
-    # 日次（右軸、棒）
-    ax2 = ax.twinx()
-    x_btc = mdates.date2num(btc_dates) - 0.4
-    x_eth = mdates.date2num(eth_dates) + 0.4
-    ax2.bar(x_btc, btc_day_b, width=0.8, alpha=0.25, align="center", label="BTC daily ($B/day)")
-    ax2.bar(x_eth, eth_day_b, width=0.8, alpha=0.25, align="center", label="ETH daily ($B/day)")
-    ax2.set_ylabel("Daily Net Inflow ($B/day)")
+    ax_btc_r = ax_btc.twinx()
+    ax_btc_r.bar(btc_dates, btc_day_b, width=1.0, align="center", alpha=0.25,
+                 label="BTC daily ($B/day)")
+    ax_btc_r.axhline(0, lw=0.8)
+    ax_btc_r.set_ylabel("Daily ($B/day)")
 
-    # 体裁
-    ax.set_title(TITLE)
-    ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax.xaxis.get_major_locator()))
-    h1, l1 = ax.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-    ax.legend(h1 + h2, l1 + l2, loc="upper left")
+    h1, l1 = ax_btc.get_legend_handles_labels()
+    h2, l2 = ax_btc_r.get_legend_handles_labels()
+    ax_btc.legend(h1 + h2, l1 + l2, loc="upper left")
+
+    # ===== ETH (下段) =====
+    ax_eth.plot(eth_dates, eth_cum_b, label="ETH ETFs (cum $B)")
+    ax_eth.set_ylabel("Cumulative ($B)")
+    ax_eth.grid(True, alpha=0.3)
+
+    ax_eth_r = ax_eth.twinx()
+    ax_eth_r.bar(eth_dates, eth_day_b, width=1.0, align="center", alpha=0.25,
+                 label="ETH daily ($B/day)")
+    ax_eth_r.axhline(0, lw=0.8)
+    ax_eth_r.set_ylabel("Daily ($B/day)")
+
+    h3, l3 = ax_eth.get_legend_handles_labels()
+    h4, l4 = ax_eth_r.get_legend_handles_labels()
+    ax_eth.legend(h3 + h4, l3 + l4, loc="upper left")
+
+    # 共有X軸の体裁
+    ax_eth.xaxis.set_major_locator(mdates.AutoDateLocator())
+    ax_eth.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax_eth.xaxis.get_major_locator()))
+
+    # タイトルとクレジット
+    fig.suptitle(TITLE, y=0.98)
+    fig.text(0.99, 0.01, "Source: SoSoValue API", ha="right", va="bottom", fontsize=8)
+
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    plt.close()
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
 
 # ------------------ Discord ------------------
 def send_to_discord(
